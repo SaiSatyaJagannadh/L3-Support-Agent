@@ -1,0 +1,22 @@
+<!doctype html><meta charset=utf-8><title>L3 Support Agent POC</title>
+<body style="font:15px system-ui;max-width:640px;margin:2em auto">
+<h3>L3 Support Agent (POC)</h3><div id=log></div>
+<input id=m style="width:70%" placeholder="Describe the issue" onkeydown="event.key=='Enter'&&send()"><button onclick=send()>Send</button>
+<button onclick=ns()>Still stuck? Raise a ticket</button>
+<button onclick=fb(1)>👍</button><button onclick=fb(-1)>👎</button> <button onclick=mine()>My tickets</button> <button onclick=adm()>Admin</button>
+<script>
+let thread="";const log=document.getElementById("log"),m=document.getElementById("m");
+const add=h=>log.insertAdjacentHTML("beforeend","<p>"+h+"</p>");
+const esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+async function post(u,b){const r=await(await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})).json();thread=r.thread;show(r)}
+function show(r){
+ if(r.status=="needs_approval"){const d=r.draft;add("<b>Draft ticket</b>: "+esc(d.short)+"<pre>"+esc(d.body)+"</pre>Similar: "+r.similar.map(t=>esc(t.number+" ("+t.state+") "+t.text)).join("; ")+
+  "<br><button onclick=\"cf('create')\">Submit</button> <button onclick=\"cf('cancel')\">Cancel</button>"+r.similar.map(t=>" <button onclick=\"cf('link','"+t.number+"')\">Same as "+t.number+"</button>").join(""));return}
+ add("🤖 "+esc(r.reply)+(r.citations?.length?" <small>"+r.citations.map(c=>esc(c.source)).join(", ")+"</small>":""))}
+const cf=(d,inc="")=>post("/confirm",{thread,decision:d,inc});
+function send(){const v=m.value;if(!v)return;add("🧑 "+esc(v));m.value="";post("/chat",{thread,message:v})}
+const fb=r=>fetch("/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({thread,rating:r})}).then(()=>add("Thanks for the feedback"));
+const mine=async()=>add("<b>My tickets</b><br>"+esc((await(await fetch("/tickets")).json()).map(t=>t.number+" "+t.group+" "+t.state).join(" | ")||"none"));
+const adm=async()=>{const r=await fetch("/admin/summary",{headers:{"X-User-Roles":"L3.Admin"}});add("<b>Admin</b><pre>"+esc(JSON.stringify(await r.json(),null,1))+"</pre>")}; // dev stub for Entra app role
+const ns=()=>post("/chat",{thread,action:"not_solved"});
+</script>
