@@ -1,0 +1,19 @@
+stages: [test, build, deploy]
+test:
+  stage: test
+  image: python:3.12-slim
+  script: [cd poc, pip install -r requirements.txt, python -m pytest -q --ignore=test_e2e.py, python evals.py]   # eval gate blocks release
+  # SAST / dependency / container scans: include GitLab templates here (Security/SAST.gitlab-ci.yml, Dependency-Scanning, Container-Scanning)
+build:
+  stage: build
+  image: docker:27
+  script: [docker build -t $ACR/l3-agent:$CI_COMMIT_SHA poc, docker push $ACR/l3-agent:$CI_COMMIT_SHA]
+deploy-dev:
+  stage: deploy
+  script: [helm upgrade --install l3-agent infra/helm --set image=$ACR/l3-agent:$CI_COMMIT_SHA --set env=dev]
+  environment: dev
+deploy-prod:
+  stage: deploy
+  script: [helm upgrade --install l3-agent infra/helm --set image=$ACR/l3-agent:$CI_COMMIT_SHA --set env=prod]
+  environment: prod
+  when: manual   # change approval gate

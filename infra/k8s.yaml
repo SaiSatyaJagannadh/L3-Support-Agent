@@ -1,0 +1,20 @@
+# POC-level AKS manifest (spec: Helm + Bicep; this is the minimal equivalent). Build/push image to ACR first.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: l3-agent}
+spec:
+  replicas: 1   # MemorySaver/SQLite are in-process; use shared SQL checkpointer before scaling out
+  selector: {matchLabels: {app: l3-agent}}
+  template:
+    metadata: {labels: {app: l3-agent}}
+    spec:
+      containers:
+      - name: api
+        image: <acr>.azurecr.io/l3-agent:poc
+        ports: [{containerPort: 8000}]
+        envFrom: [{secretRef: {name: l3-agent-secrets}}]   # AZURE_OPENAI_*
+---
+apiVersion: v1
+kind: Service
+metadata: {name: l3-agent}
+spec: {selector: {app: l3-agent}, ports: [{port: 80, targetPort: 8000}]}

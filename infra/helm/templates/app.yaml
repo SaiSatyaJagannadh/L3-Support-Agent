@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: l3-agent-{{ .Values.env }}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: l3-agent}}
+  template:
+    metadata: {labels: {app: l3-agent}}
+    spec:
+      containers:
+      - name: api
+        image: {{ .Values.image }}
+        ports: [{containerPort: 8000}]
+        envFrom: [{secretRef: {name: {{ .Values.secretName }}}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: l3-agent-{{ .Values.env }}}
+spec: {selector: {app: l3-agent}, ports: [{port: 80, targetPort: 8000}]}
