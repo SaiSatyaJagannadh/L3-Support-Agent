@@ -345,11 +345,11 @@ A local proof of concept of the design above exists in this repo. Nothing is dep
 | Agents / orchestration | LangGraph: intake (PII redaction, injection block) → triage (max 3 follow-ups) → knowledge (cited, access-filtered answers) → log insights → similar tickets → draft → **approval interrupt** → idempotent ticket create, routed by a rules table | `poc/core.py` |
 | API | FastAPI: `/chat`, `/chat/stream` (SSE), `/confirm`, `/tickets`, `/feedback`, `/admin/summary` | `poc/main.py` |
 | Auth | Entra JWT validation (signature, audience, issuer; app roles) when `AAD_*` set, else dev header stub | `poc/auth.py` |
-| Frontend | React + TypeScript + Vite + Fluent UI v9 + MSAL React (chat, citations, ticket draft, My tickets, feedback); plain HTML page also served by the API | `apps/web`, `poc/static` |
+| Frontend | React + TypeScript + Vite + Fluent UI v9 + MSAL React. Interactive: answers stream over SSE (`/chat/stream`), example and quick-reply chips for the clarify step (app / environment), clickable citation chips, 👍/👎 per answer, draft-ticket card with Submit / Cancel / "Same as INC…" (input locked until the user decides), result badge with the INC number, tabs for My tickets and Admin (eval gate, feedback, KB gaps), New chat, error banner. A plain HTML page is also served by the API. | `apps/web/src/App.tsx`, `poc/static` |
 | Retrieval / ingestion | Token-overlap search with per-doc access groups; heading chunker and Confluence REST crawler (env-gated) | `poc/core.py`, `poc/ingestion.py` |
 | Test data | 3 fake apps, 7 synthetic KB docs (Confluence, SharePoint, OneNote, GitLab; one L3-only, one poisoned), 3 tickets, logs, golden and adversarial sets | `poc/data.py` |
 | Evals / security | Golden + adversarial eval gate; PyRIT converter red team (12 attacks, 0 failures) and PyRIT `PromptSendingAttack` run (9 attacks, 0 tickets written) | `poc/evals.py`, `poc/redteam.py`, `poc/pyrit_attack.py` |
-| Testing | 6 pytest tests, Playwright UI test, load test (100/100, p95 about 530 ms) | `poc/test_poc.py`, `poc/test_e2e.py`, `poc/loadtest.py` |
+| Testing | 6 pytest tests, Playwright test of the plain page, 3 Playwright tests of the React UI (chips, streaming, citations, feedback, draft/approval lock, Submit, My tickets, Admin, Cancel, New chat, injection block; all pass), load test (100/100, p95 about 530 ms) | `poc/test_poc.py`, `poc/test_e2e.py`, `poc/test_e2e_react.py`, `poc/loadtest.py` |
 | Integrations (dummy) | Local mocks for Azure OpenAI, AI Search, Prompt Shields, ServiceNow, Confluence and Entra: 9/9 checks pass | `poc/dummy_run.py` |
 | Infra / CI | Bicep skeleton (compiles), Helm chart (lints and renders), k8s manifest, Dockerfile (builds), `.gitlab-ci.yml`, `run_poc.sh` | `infra/`, `.gitlab-ci.yml`, `run_poc.sh` |
 
@@ -364,6 +364,6 @@ A local proof of concept of the design above exists in this repo. Nothing is dep
 
 **Not built**
 
-APIM and MCP servers, VNet/private endpoints/WAF in Bicep, OneNote and GitLab crawlers, SharePoint ACL mapping, SQL Server checkpointer, My-tickets sync from ServiceNow, KB-gap loop into Confluence, UAT and Azure Load Testing, and SSE in the React UI.
+APIM and MCP servers, VNet/private endpoints/WAF in Bicep, OneNote and GitLab crawlers, SharePoint ACL mapping, SQL Server checkpointer, My-tickets sync from ServiceNow, KB-gap loop into Confluence, UAT and Azure Load Testing, file attachments and editing the ticket draft in the UI, and accessibility testing (WCAG).
 
 **Open questions above are still unanswered.**
