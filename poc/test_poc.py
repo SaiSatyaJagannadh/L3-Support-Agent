@@ -129,3 +129,18 @@ def test_database_persists_across_processes():
     run = lambda c_: subprocess.run([sys.executable, "-c", c_], env=env, capture_output=True, text=True, cwd=os.path.dirname(__file__) or ".", check=True).stdout.strip()
     n = run(code)
     assert run(f"import store; print(store.get_ticket('{n}')['short'])") == "Persisted ticket"
+
+def test_plain_openai_key_is_used_for_answers(monkeypatch):
+    import sys, types
+    seen = {}
+    class Chat:
+        class completions:
+            @staticmethod
+            def create(**kw):
+                seen.update(kw); return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="LLM says restart the pod [kb1]"))])
+    fake = types.SimpleNamespace(OpenAI=lambda: types.SimpleNamespace(chat=Chat), AzureOpenAI=lambda **k: (_ for _ in ()).throw(AssertionError("azure must not be used")))
+    monkeypatch.setitem(sys.modules, "openai", fake); monkeypatch.setenv("OPENAI_API_KEY", "sk-test"); monkeypatch.setenv("OPENAI_MODEL", "gpt-test")
+    r = chat(message="payflow prod 504 timeout")
+    assert r["reply"] == "LLM says restart the pod [kb1]" and seen["model"] == "gpt-test"
+    assert "<docs>" in seen["messages"][1]["content"] and "kb1" in seen["messages"][1]["content"]   # only retrieved docs go to the model
+    assert r["citations"][0]["id"] == "kb1"                                                          # citations still come from retrieval

@@ -8,7 +8,7 @@ Everything needed to demo, deploy and extend the POC. Nothing here needs a key t
 
 | You add | It switches on | Without it (default) |
 | --- | --- | --- |
-| `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT` | Natural-language answers written from the cited docs | The best-matching sentences of the document are quoted |
+| `OPENAI_API_KEY` (optional `OPENAI_MODEL`, default `gpt-4o-mini`) **or** `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT` | Natural-language answers written from the cited docs | The best-matching sentences of the document are quoted |
 | `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_KEY` | Azure AI Search (hybrid, access-filtered) | Local keyword scoring over the `kb_docs` table |
 | `CONTENT_SAFETY_ENDPOINT`, `CONTENT_SAFETY_KEY` | Azure Prompt Shields | Built-in injection-pattern check |
 | `SN_INSTANCE`, `SN_USER`, `SN_PASSWORD` | Tickets are also created in ServiceNow and use its INC number | Tickets live in the local database |

@@ -50,7 +50,7 @@ with st.sidebar:
             st.rerun()
     with st.expander("System status"):
         live = lambda var: "🟢 live" if os.getenv(var) else "⚪ built-in demo"
-        st.markdown(f"- Answers: {live('AZURE_OPENAI_ENDPOINT')}\n- Search: {live('AZURE_SEARCH_ENDPOINT')}\n- Tickets: {live('SN_INSTANCE')}\n- Sign-in: {live('AAD_TENANT_ID')}\n- Database: SQLite")
+        st.markdown(f"- Answers: {live('OPENAI_API_KEY') if os.getenv('OPENAI_API_KEY') else live('AZURE_OPENAI_ENDPOINT')}\n- Search: {live('AZURE_SEARCH_ENDPOINT')}\n- Tickets: {live('SN_INSTANCE')}\n- Sign-in: {live('AAD_TENANT_ID')}\n- Database: SQLite")
         st.caption("Keys are optional. See POC-NOTES.md.")
 
 def cites_row(cites):
