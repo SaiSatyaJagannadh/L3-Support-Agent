@@ -1,7 +1,8 @@
 """SQLite database (stand-in for Azure SQL): schema, seed data and a small thread-safe wrapper.
 File location: POC_DB env var (default l3.db in the working directory; ':memory:' for tests). Delete the file to reset the demo."""
 import os, pathlib, sqlite3, threading, datetime as dt
-from data import RULES, LOGS, KB, SEED_TICKETS
+SCHEMA_VERSION = 2   # bump when the schema changes: the demo database is dropped and re-seeded (it holds no real data)
+from data import RULES, LOGS, KB, SEED_TICKETS, URGENCY
 
 def _loadenv():   # tiny .env loader (no dependency); real environment variables win
     for p in (pathlib.Path.cwd() / ".env", pathlib.Path(__file__).parent.parent / ".env", pathlib.Path(__file__).parent / ".env"):
@@ -16,9 +17,10 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations(thread TEXT PRIMARY KEY, created_at TEXT DEFAULT CURRENT_TIMESTAMP, app TEXT, env TEXT, outcome TEXT);
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, thread TEXT, role TEXT, content TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS kb_docs(id TEXT PRIMARY KEY, source TEXT, app TEXT, title TEXT, url TEXT, acl TEXT, text TEXT, added_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS tickets(number TEXT PRIMARY KEY, idem TEXT UNIQUE, app TEXT, grp TEXT, short TEXT, body TEXT, state TEXT DEFAULT 'new',
-  source TEXT, impact TEXT, urgency INTEGER, thread TEXT, requester TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS ticket_comments(id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, author TEXT, text TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS tickets(number TEXT PRIMARY KEY, type TEXT DEFAULT 'INC', idem TEXT UNIQUE, app TEXT, grp TEXT, short TEXT, body TEXT, state TEXT DEFAULT 'new',
+  source TEXT, impact TEXT, urgency INTEGER, thread TEXT, requester TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS ticket_comments(id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, author TEXT, text TEXT, kind TEXT DEFAULT 'comment', ts TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS attachments(id INTEGER PRIMARY KEY AUTOINCREMENT, number TEXT, filename TEXT, mime TEXT, size INTEGER, data BLOB, ts TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS rules(app TEXT, category TEXT, l2 TEXT, l3 TEXT);
 CREATE TABLE IF NOT EXISTS logs(app TEXT, env TEXT, level TEXT, msg TEXT);
 CREATE TABLE IF NOT EXISTS feedback(thread TEXT, rating INTEGER, comment TEXT);
@@ -45,7 +47,9 @@ class _DB:
         with s.l: s.c.commit()
 
 DB = _DB(os.getenv("POC_DB", "l3.db"))
-DB.executescript(SCHEMA)
+if DB.execute("pragma user_version")[0][0] != SCHEMA_VERSION:
+    DB.executescript("".join(f"drop table if exists {t};" for t in ("conversations", "messages", "kb_docs", "tickets", "ticket_comments", "attachments", "rules", "logs", "feedback", "unanswered", "audit")))
+DB.executescript(SCHEMA + f"pragma user_version={SCHEMA_VERSION};")
 
 def seed():
     if not DB.execute("select 1 from rules"):
@@ -56,11 +60,12 @@ def seed():
         DB.executemany("insert into kb_docs(id,source,app,title,url,acl,text) values(?,?,?,?,?,?,?)",
                        [(d["id"], d["source"], d["app"], d["title"], d["url"], ",".join(d["acl"]), d["text"]) for d in KB])
     if not DB.execute("select 1 from tickets"):
-        grp = {a: l2 for a, _, l2, _ in RULES}; now = dt.datetime.now()
-        urg = {"all": 1, "team": 2, "me": 3}
-        for n, app, state, imp, days, short, body, res in SEED_TICKETS:
-            DB.execute("insert into tickets(number,idem,app,grp,short,body,state,source,impact,urgency,requester,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?)",
-                       (n, n, app, grp[app], short, body, state, "seed", imp, urg[imp], "demo.user", (now - dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")))
-            if res: DB.execute("insert into ticket_comments(number,author,text) values(?,?,?)", (n, "L2 engineer", "Resolution: " + res))
+        grp = {a: l2 for a, _, l2, _ in RULES}; now = dt.datetime.now(dt.timezone.utc)
+        for n, app, state, imp, hours, short, body, res, who in SEED_TICKETS:
+            ts = (now - dt.timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+            DB.execute("insert into tickets(number,type,idem,app,grp,short,body,state,source,impact,urgency,requester,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (n, "UR" if n.startswith("UR") else "INC", n, app, grp[app], short, body, state, "seed", imp, URGENCY[imp], who, ts, ts))
+            DB.execute("insert into ticket_comments(number,author,text,kind,ts) values(?,?,?,?,?)", (n, "System", f"Ticket created by {who}", "event", ts))
+            if res: DB.execute("insert into ticket_comments(number,author,text,ts) values(?,?,?,?)", (n, "L2 engineer", "Resolution: " + res, ts))
     DB.commit()
 seed()
