@@ -11,10 +11,10 @@ spec:
       containers:
       - name: api
         image: <acr>.azurecr.io/l3-agent:poc
-        ports: [{containerPort: 8000}]
+        ports: [{containerPort: 8501}]
         envFrom: [{secretRef: {name: l3-agent-secrets}}]   # AZURE_OPENAI_*
 ---
 apiVersion: v1
 kind: Service
 metadata: {name: l3-agent}
-spec: {selector: {app: l3-agent}, ports: [{port: 80, targetPort: 8000}]}
+spec: {selector: {app: l3-agent}, ports: [{port: 80, targetPort: 8501}]}
