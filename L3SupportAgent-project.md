@@ -336,39 +336,44 @@ Ship answers first, ticketing second, extra sources third; each phase ends at a 
 
 ## POC status — what was built (as of Nov 18, 2026)
 
-A working proof of concept of this design is in the repo and runs with no keys. Run it with `streamlit run streamlit_app.py`; keys, deployment and the demo script are in `POC-NOTES.md`.
+A working proof of concept of this design is in the repo, runs with no keys, and is deployed on Streamlit Community Cloud. Run it with `streamlit run streamlit_app.py`; keys, the demo script and deployment are in `POC-NOTES.md`.
 
 ![Architecture as built](docs/architecture.png)
 
-**Product experience (Streamlit, SaaS style, no admin screen)**
+**Product: Support Assist (Streamlit, no admin screen)**
 
-- **Assistant**: chat with follow-up chips, streamed answers with citation chips that open the source, a "How I got this answer" explanation on every message, 👍/👎, and a draft-ticket card with similar tickets, their fixes, and Submit / Cancel / "Same issue".
-- **Tickets**: eight pre-created sample tickets, filters (state, origin: AI / manual / sample), a detail view with comments and status, and **New ticket** for creating tickets by hand without AI. AI and manual tickets share one table, so manual tickets also feed similar-ticket matching.
-- **Knowledge**: browse documents the current role may see, paste a document, or import a public Google Doc by link. A role picker (Support staff / L3 engineer) demonstrates access control.
+- **Assist**: chat with follow-up chips, streamed answers with citation chips, "How I got this answer" on every message, 👍/👎, attachments in the chat box, and a draft-ticket card (type, attachments, similar tickets and their fixes, Submit / Cancel / "Same issue"). When the documents hold nothing relevant it offers two options: attach a log or screenshot so it can search again, or create a ticket from the conversation.
+- **Dashboard**: open tickets, P1 open, SLA at risk / breached, chats answered without a ticket, charts, an SLA watchlist, and "reported by me".
+- **Tickets**: filters (type, state, origin, "reported by me"), a detail view with activity timeline, attachments (download and add), related knowledge and similar tickets; status changes, **resolve with a fix note**, **escalate to L3** with a hand-off note, and **publish the fix to the knowledge base** (knowledge-centred service).
+- **New ticket**: a separate page to create a ticket without AI: type Incident (`INC`) or User request (`UR`), application, environment, description, impact and attachments.
+- **Knowledge**: browse what the current profile may see, paste a document, or import a public Google Doc by link.
+- **Identity and status**: demo user profiles (L2 analyst, L3 engineer) decide document access; a System status panel shows what each component runs on and offers a live AI connection test.
 
 **How the AI flow works**
 
 1. Intake masks card numbers and emails and blocks prompt-injection attempts.
 2. Triage asks for the application and environment (up to 3 follow-ups).
-3. Knowledge searches only documents the user may see and answers from them with citations. With fewer than two matching key terms it says so and offers a ticket.
+3. Knowledge searches only documents the user may see and answers from them with citations. With fewer than two matching key terms it says so and offers attach-more-detail or a ticket. With an OpenAI or Azure OpenAI key set, the model writes the answer from only the retrieved documents.
 4. "Still stuck" starts the ticket flow with its own follow-ups (application, environment, impact), then reads logs with a fixed read-only query, finds similar tickets, and drafts the ticket.
 5. The graph pauses for approval. Only after Submit is the ticket created. Priority comes from the impact (everyone P1, team P2, just me P3) and the assignment group from the `rules` table; the AI decides neither.
 
-**Database (SQLite file `l3.db`, stand-in for Azure SQL)**: `conversations`, `messages`, `kb_docs`, `tickets` (source `ai` / `manual` / `seed`), `ticket_comments`, `rules`, `logs`, `feedback`, `unanswered` (knowledge gaps), `audit`.
+**Ticketing rules**: numbers are always 10 characters (`INC` + 7 digits, `UR` + 8 digits); SLA targets are P1 4 h, P2 8 h, P3 24 h with "at risk" at 75% of the target and "breached" after it; attachments are limited to 5 files of 5 MB each by type and size, and a rejected file creates no ticket; escalation moves the ticket to the application's L3 group and requires a hand-off note; resolving requires a fix note.
+
+**Database (SQLite file `l3.db`, stand-in for Azure SQL)**: `conversations`, `messages`, `kb_docs`, `tickets`, `ticket_comments`, `attachments`, `rules`, `logs`, `feedback`, `unanswered`, `audit`.
 
 | Spec area | What exists | Where |
 | --- | --- | --- |
 | Agents / orchestration | LangGraph: intake → triage → knowledge, and collect → logs → similar → draft → approval → create | `poc/core.py` |
-| Front end | Streamlit app (replaces the React app in the spec; the earlier React build is in git history) | `streamlit_app.py` |
-| Data | SQLite schema, seed data, ticket/document access | `poc/db.py`, `poc/store.py`, `poc/data.py` |
+| Front end | Streamlit app (replaces the React app in the spec; the earlier build is in git history) | `streamlit_app.py` |
+| Data and ticketing | SQLite schema and seed data; ticket, attachment, SLA, escalation and document logic; system status | `poc/db.py`, `poc/store.py`, `poc/health.py`, `poc/data.py` |
 | Knowledge | 15 sample runbooks tagged Confluence / SharePoint / OneNote / GitLab / Google Docs, including an L3-only doc and a deliberately poisoned doc | `poc/kb/*.md` |
 | REST API (optional) | `/chat`, `/chat/stream` (SSE), `/confirm`, `/tickets`, `/kb`, `/feedback`, `/admin/summary`; Entra token check when configured | `poc/main.py`, `poc/auth.py` |
 | Ingestion | Heading chunker and Confluence crawler (env-gated) | `poc/ingestion.py` |
-| Quality | 17 tests (agent, API, DB, Streamlit UI), eval gate, PyRIT red team (12 attacks, 0 failures), load test, mock-service integration run (9/9) | `poc/test_*.py`, `evals.py`, `redteam.py`, `pyrit_attack.py`, `loadtest.py`, `dummy_run.py` |
+| Quality | 27 tests (agent, API, DB, SLA, attachments, UI), eval gate, PyRIT red team (12 attacks, 0 failures), load test, mock-service integration run (9/9) | `poc/test_*.py`, `evals.py`, `redteam.py`, `pyrit_attack.py`, `loadtest.py`, `dummy_run.py` |
 | Infra / CI | Dockerfile, Helm chart, Bicep skeleton, GitLab CI, `run_poc.sh` | repo root, `infra/` |
 
-**Stand-ins used instead of the real thing**: SQLite for Azure SQL; keyword search for Azure AI Search; quoted document text for Azure OpenAI answers; mock services for Azure, ServiceNow, Confluence and Entra (code is wired and switches on with keys, but was never run against the real services); manifests that render and compile but were never deployed; the GitLab pipeline never ran on GitLab.
+**Stand-ins used instead of the real thing**: SQLite for Azure SQL; keyword search for Azure AI Search; quoted document text (or an OpenAI model when a key is set) for answers; demo user profiles for Entra sign-in; mock services for Azure, ServiceNow, Confluence and Entra (code is wired and switches on with keys, but was never run against the real services); manifests that render and compile but were never deployed to a cluster; the GitLab pipeline never ran on GitLab.
 
-**Not built**: APIM and MCP servers, VNet / private endpoints / WAF in Bicep, OneNote and GitLab crawlers, SharePoint ACL mapping, SQL Server checkpointer, ServiceNow ticket-status sync, the KB-gap loop into Confluence, UAT, Azure Load Testing, file attachments, editing the draft in the UI, accessibility testing, and an admin dashboard in the UI (a `/admin/summary` API remains).
+**Not built**: APIM and MCP servers, VNet / private endpoints / WAF in Bicep, OneNote and GitLab crawlers, SharePoint ACL mapping, SQL Server checkpointer, ServiceNow ticket-status sync, notifications and email intake, reading text from images or PDFs, an admin dashboard in the UI (a `/admin/summary` API remains), and accessibility testing.
 
 **Open questions above are still unanswered.**
