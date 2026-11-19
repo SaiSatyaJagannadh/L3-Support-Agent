@@ -26,7 +26,7 @@ def test_flow_answer_then_ticket_needs_approval():
     r = chat(thread=t, message="everyone is affected")
     assert r["status"] == "needs_approval" and "urgency 1" in r["draft"]["body"]
     sim = {x["number"]: x for x in r["similar"]}
-    assert "INC1007" in sim and "pool size" in sim["INC1007"]["resolution"]   # similar resolved ticket + its fix
+    assert "INC0010007" in sim and "pool size" in sim["INC0010007"]["resolution"]   # similar resolved ticket + its fix
     assert len(c.get("/tickets").json()) == before                    # nothing written before confirm
     r = c.post("/confirm", json={"thread": t, "decision": "create"}).json()
     assert r["ticket"].startswith("INC") and "L2-Payments" in r["reply"]
@@ -55,10 +55,10 @@ def test_link_adds_comment_instead_of_duplicate():
     t = chat(message="wealthplan uat report export fails with 500 for large portfolios")["thread"]
     before = len(c.get("/tickets").json())
     r = to_draft(t)
-    assert "INC1002" in {x["number"] for x in r["similar"]}
-    r = c.post("/confirm", json={"thread": t, "decision": "link", "inc": "INC1002"}).json()
+    assert "INC0010002" in {x["number"] for x in r["similar"]}
+    r = c.post("/confirm", json={"thread": t, "decision": "link", "inc": "INC0010002"}).json()
     assert r["status"] == "linked" and len(c.get("/tickets").json()) == before
-    assert any("Another user is affected" in x["text"] for x in c.get("/tickets/INC1002").json()["comments"])
+    assert any("Another user is affected" in x["text"] for x in c.get("/tickets/INC0010002").json()["comments"])
 
 def test_acl_trimming_and_injection():
     r = chat(message="payflow prod break-glass credentials database failover")   # l3-only doc
@@ -70,7 +70,7 @@ def test_acl_trimming_and_injection():
 
 def test_seed_data_and_manual_ticket_crud_without_ai():
     seeds = c.get("/tickets", params={"source": "seed"}).json()
-    assert len(seeds) == 8 and {s["state"] for s in seeds} == {"new", "in_progress", "resolved"}
+    assert len(seeds) == 11 and {s["state"] for s in seeds} == {"new", "in_progress", "resolved"}
     r = c.post("/tickets", json={"short": "Printer jam at branch 4", "description": "Receipt printer jams", "app": "branchdesk", "impact": "me"})
     assert r.status_code == 201 and r.json()["group"] == "L2-Branch"
     n = r.json()["number"]; assert store.get_ticket(n)["source"] == "manual"
@@ -144,3 +144,67 @@ def test_plain_openai_key_is_used_for_answers(monkeypatch):
     assert r["reply"] == "LLM says restart the pod [kb1]" and seen["model"] == "gpt-test"
     assert "<docs>" in seen["messages"][1]["content"] and "kb1" in seen["messages"][1]["content"]   # only retrieved docs go to the model
     assert r["citations"][0]["id"] == "kb1"                                                          # citations still come from retrieval
+
+def test_ticket_numbers_are_10_chars_with_inc_or_ur_prefix():
+    import pytest
+    a, _ = store.create_ticket(app="payflow", short="Number format check A", body="b", source="manual")
+    b, _ = store.create_ticket(app="payflow", short="Number format check B", body="b", source="manual", type="UR")
+    c2, _ = store.create_ticket(app="payflow", short="Number format check C", body="b", source="manual", type="UR")
+    assert a.startswith("INC") and len(a) == 10 and b.startswith("UR") and len(b) == 10
+    assert int(c2[2:]) == int(b[2:]) + 1                                  # sequential per type
+    assert store.get_ticket(b)["type"] == "UR"
+    with pytest.raises(ValueError): store.create_ticket(app="payflow", short="Bad type here", body="b", source="manual", type="XX")
+    assert c.post("/tickets", json={"short": "API user request", "app": "payflow", "type": "UR"}).json()["number"].startswith("UR")
+    assert c.post("/tickets", json={"short": "API bad type", "app": "payflow", "type": "ZZ"}).status_code == 422
+    assert all(len(t["number"]) == 10 for t in store.list_tickets())
+
+def test_attachments_validated_stored_and_atomic():
+    import pytest
+    n, _ = store.create_ticket(app="branchdesk", short="Ticket with attachments", body="b", source="manual",
+                               attachments=[("screen shot.png", b"\x89PNG fake"), ("../../etc/app.log", b"line1\nline2")])
+    t = store.get_ticket(n); names = [a["filename"] for a in t["attachments"]]
+    assert names == ["screen shot.png", "app.log"]                        # path components stripped
+    assert store.get_attachment(t["attachments"][1]["id"])["data"] == b"line1\nline2"
+    before = len(store.list_tickets())
+    for bad in ([("run.exe", b"MZ")], [("empty.txt", b"")], [("big.pdf", b"x" * (5 * 1024 * 1024 + 1))], [("noext", b"x")]):
+        with pytest.raises(ValueError): store.create_ticket(app="branchdesk", short="Should not exist", body="b", source="manual", attachments=bad)
+    assert len(store.list_tickets()) == before                            # a bad file creates no ticket
+    with pytest.raises(ValueError): store.create_ticket(app="branchdesk", short="Too many files", body="b", source="manual", attachments=[(f"f{i}.txt", b"x") for i in range(6)])
+
+def test_sla_states_by_priority():
+    byn = {t["number"]: t for t in store.list_tickets()}
+    assert store.sla(byn["INC0010004"])["state"] == "breached"            # P1, 5h old, 4h target
+    assert store.sla(byn["INC0010005"])["state"] == "on track"            # P2, 5h old, 8h target
+    assert store.sla(byn["INC0010006"])["state"] == "at risk"             # P3, 20h old, 24h target
+    assert store.sla(byn["INC0010001"])["state"] == "met"                 # resolved
+
+def test_escalate_resolve_and_publish_fix_to_knowledge():
+    import pytest
+    n, grp = store.create_ticket(app="payflow", short="Refund batch rejects zero amounts", body="Refund batch rejects zero amount lines", source="manual", requester="Priya Nair")
+    assert grp == "L2-Payments"
+    with pytest.raises(ValueError): store.escalate(n, "too short")
+    assert store.escalate(n, "Tried restarting the worker; needs code-level look at the validator") == "L3-Payments"
+    t = store.get_ticket(n); assert t["group"] == "L3-Payments" and t["state"] == "in_progress"
+    assert any("Hand-off to L3" in x["text"] for x in t["comments"]) and any(x["kind"] == "event" and "Escalated" in x["text"] for x in t["comments"])
+    with pytest.raises(ValueError): store.promote_to_kb(n)                # not resolved yet
+    with pytest.raises(ValueError): store.resolve(n, "short")
+    store.resolve(n, "Validator now allows zero-amount refund lines; deployed in release 5.9")
+    kb_id = store.promote_to_kb(n)
+    doc = [d for d in store.list_docs() if d["id"] == kb_id][0]; assert "release 5.9" in doc["text"] and doc["app"] == "payflow"
+    r = chat(message="payflow prod refund batch rejects zero amounts")      # the assistant can now answer from the published fix
+    assert r["citations"][0]["id"] == kb_id
+
+def test_status_page_and_ai_ping(monkeypatch):
+    import sys, types, health
+    rows = {r["name"]: r for r in health.checks()}
+    assert rows["Database"]["status"] == "online" and "SQLite" in rows["Database"]["type"] and rows["AI answers"]["status"] == "built-in"
+    assert health.overall(health.checks()) == "online"
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test"); monkeypatch.setenv("OPENAI_MODEL", "gpt-test")
+    assert {r["name"]: r for r in health.checks()}["AI answers"]["type"] == "OpenAI · gpt-test"
+    ok = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=lambda **k: "ok")))
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=lambda **k: ok))
+    assert health.ping_llm()[0] is True
+    def boom(**k): raise RuntimeError("401 bad key")
+    bad = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=boom)))
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=lambda **k: bad))
+    ok2, msg = health.ping_llm(); assert ok2 is False and "401 bad key" in msg

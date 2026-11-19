@@ -85,7 +85,7 @@ def answer(q, chunks):
 class S(TypedDict, total=False):
     _t: str; action: str; message: str; groups: list; slots: dict; turns: int; reply: str; citations: list; trace: list
     confidence: float; similar: list; logs: list; draft: dict; ticket: str; status: str; question: str
-    want_ticket: bool; awaiting: str; tturns: int
+    want_ticket: bool; awaiting: str; tturns: int; user: str; ttype: str
 
 ASK = {"app": f"Which application is this about? ({', '.join(APPS)})", "env": f"Which environment? ({', '.join(ENVS)})",
        "impact": "Who is affected? (just me, my team, or everyone)"}
@@ -122,8 +122,8 @@ def knowledge(s):
     visible = sum(1 for d in list_docs() if set(d["acl"]) & set(s["groups"]))
     if not hits:
         DB.execute("insert into unanswered values(?,?)", (s.get("_t", ""), s["question"])); DB.commit()
-        return {"reply": "I couldn't find a documented answer for this. You can raise a ticket and the L2 team will take it from here.", "citations": [], "confidence": 0.0, "status": "answered",
-                "trace": tr(s, f"Searched {visible} documents you have access to. Nothing matched at least two key terms, so I did not guess.", "Offered to raise a ticket instead.")}
+        return {"reply": "I couldn't find a documented answer for this. I can look again if you attach a log or screenshot, or I can create a ticket for you.", "citations": [], "confidence": 0.0, "status": "answered",
+                "trace": tr(s, f"Searched {visible} documents you have access to. Nothing matched at least two key terms, so I did not guess.", "Offered two options instead: attach more detail so I can search again, or raise a ticket.")}
     top = hits[0][1]
     return {"reply": answer(s["question"], hits), "confidence": hits[0][0], "status": "answered",
             "citations": [{"id": d["id"], "source": d["source"], "url": d["url"], "title": d.get("title", "")} for _, d in hits],
@@ -164,10 +164,10 @@ def approve(s, config):
             store.add_comment(ans["inc"], f"Another user is affected: {s['draft']['short']}", "AI assistant")
         audit(t, "linked", ans["inc"]); return {**done, "status": "linked", "ticket": ans["inc"], "reply": f"Linked to {ans['inc']} instead of creating a duplicate."}
     if d != "create": audit(t, "declined"); return {**done, "status": "cancelled", "reply": "Ok, no ticket was created."}
-    return {"status": "approved"}
+    return {"status": "approved", "ttype": ans.get("type", "INC")}
 def create(s, config):
     d = s["draft"]; t = config["configurable"]["thread_id"]
-    num, grp = store.create_ticket(app=d["app"], short=d["short"], body=d["body"], impact=d["impact"], source="ai", thread=t, idem=d["id"])
+    num, grp = store.create_ticket(app=d["app"], short=d["short"], body=d["body"], impact=d["impact"], source="ai", thread=t, idem=d["id"], type=s.get("ttype", "INC"), requester=s.get("user") or "demo.user")
     audit(t, "ticket_created", f"{num}->{grp}")
     return {"ticket": num, "status": "ticket", "citations": [], "want_ticket": False, "tturns": 0, "awaiting": "",
             "reply": f"Created {num} and assigned it to {grp}.", "trace": tr(s, f"You approved, so I created {num}. Group {grp} came from the routing rules table.")}

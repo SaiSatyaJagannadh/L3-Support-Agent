@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from auth import user
-from data import APPS, IMPACT
+from data import APPS, IMPACT, TYPES
 
 app = FastAPI(title="L3 Support Agent API")
 
@@ -44,6 +44,7 @@ class NewTicket(BaseModel):
     description: str = ""
     app: str
     impact: str = "team"
+    type: str = "INC"                # INC (incident) or UR (user request)
 @app.get("/tickets")
 def tickets(state: str = "", source: str = "", q: str = ""):
     return store.list_tickets(state or None, source or None, q or None)
@@ -51,7 +52,8 @@ def tickets(state: str = "", source: str = "", q: str = ""):
 def new_ticket(t: NewTicket):
     if t.app not in APPS: raise HTTPException(422, f"app must be one of {list(APPS)}")
     if t.impact not in IMPACT: raise HTTPException(422, f"impact must be one of {list(IMPACT)}")
-    num, grp = store.create_ticket(app=t.app, short=t.short, body=t.description or t.short, impact=t.impact, source="manual")
+    if t.type not in TYPES: raise HTTPException(422, f"type must be one of {list(TYPES)}")
+    num, grp = store.create_ticket(app=t.app, short=t.short, body=t.description or t.short, impact=t.impact, source="manual", type=t.type)
     return {"number": num, "group": grp}
 @app.get("/tickets/{number}")
 def ticket(number: str):
