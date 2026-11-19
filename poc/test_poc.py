@@ -69,8 +69,10 @@ def test_acl_trimming_and_injection():
     assert all(x["id"] != "kb5" for x in r["citations"])              # poisoned doc dropped
 
 def test_seed_data_and_manual_ticket_crud_without_ai():
-    seeds = c.get("/tickets", params={"source": "seed"}).json()
-    assert len(seeds) == 11 and {s["state"] for s in seeds} == {"new", "in_progress", "resolved"}
+    import data
+    seeds = [s for s in c.get("/tickets").json() if s["number"] in {x[0] for x in data.SEED_TICKETS}]
+    assert len(seeds) == 15 and {s["state"] for s in seeds} == {"new", "in_progress", "resolved"}
+    assert {s["source"] for s in seeds} == {"ai", "manual"} and sum(s["source"] == "ai" for s in seeds) == 6   # sample data mixes AI-raised and hand-raised tickets
     r = c.post("/tickets", json={"short": "Printer jam at branch 4", "description": "Receipt printer jams", "app": "branchdesk", "impact": "me"})
     assert r.status_code == 201 and r.json()["group"] == "L2-Branch"
     n = r.json()["number"]; assert store.get_ticket(n)["source"] == "manual"
@@ -208,3 +210,28 @@ def test_status_page_and_ai_ping(monkeypatch):
     bad = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=boom)))
     monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(OpenAI=lambda **k: bad))
     ok2, msg = health.ping_llm(); assert ok2 is False and "401 bad key" in msg
+
+def test_readiness_checks_and_business_stats():
+    b = store.business_stats()
+    assert b["total"] >= 15 and b["ai"] >= 6 and {r["app"] for r in b["apps"]} >= {"payflow", "wealthplan", "branchdesk"}
+    for r in b["apps"]: assert r["total"] == r["ai"] + r["manual"]
+    (ar, an), (mr, mn) = b["ready_by"]["ai"], b["ready_by"]["manual"]
+    assert an >= 6 and mn >= 6 and ar / an > mr / mn                      # AI-assisted incidents arrive more complete than hand-written ones
+    vague = {"body": "Printer not working please check.", "app": "branchdesk"}
+    r = store.readiness(vague); assert not r["ready"] and set(r["missing"]) == {"Environment", "Specific symptom or error", "Evidence or steps already tried"}
+    full = {"body": "Export fails with HTTP 500 for large portfolios\nEnvironment: uat", "app": "wealthplan"}
+    no_proof = {**full, "body": "Export of large portfolios fails every night\nEnvironment: uat"}
+    assert store.readiness(full)["ready"] and store.readiness(no_proof)["missing"] == ["Evidence or steps already tried"]               # evidence missing
+    assert store.readiness(no_proof, n_attachments=1)["ready"]                                                                         # an attachment counts as evidence
+    n, _ = store.create_ticket(app="payflow", short="New AI-style ticket", body="Problem: 504 timeout on submit\nApplication: PayFlow\nEnvironment: prod\nLog errors: 504 upstream\nDocs already checked: kb1", source="ai")
+    assert store.business_stats()["ai"] == b["ai"] + 1
+
+def test_documents_are_entitled_by_role():
+    import core, data
+    user, l1, l3 = ["everyone"], ["everyone", "staff"], ["everyone", "staff", "l3"]
+    ids = lambda q, g: {d["id"] for _, d in core.search(q, g, "payflow")}
+    assert "kb1" not in ids("payflow 504 timeout gateway pool", user) and "kb1" in ids("payflow 504 timeout gateway pool", l1)     # internal runbook: support team only
+    assert "kb4" not in ids("payflow database failover credentials", l1) and "kb4" in ids("payflow database failover credentials break-glass", l3)
+    assert {d["id"] for _, d in core.search("wealthplan login loop sso", user, "wealthplan")} >= {"kb2"}                           # self-service article: everyone
+    assert [u["key"] for u in data.USERS] == ["user", "l1", "l2", "l3"] and data.USERS[0]["role"] == "General user"             # default is the general user
+    assert data.ENTITLED["everyone"] == "All users"
