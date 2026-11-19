@@ -18,17 +18,21 @@ def _writable(p):
 _db = os.environ.get("POC_DB") or str(ROOT / "l3.db")
 os.environ["POC_DB"] = _db if _db == ":memory:" or _writable(_db) else str(Path(tempfile.gettempdir()) / "l3.db")   # Cloud filesystems may be read-only/ephemeral
 import core, store, health                    # noqa: E402  (after env setup: db.py reads POC_DB and .env on import)
-from data import APPS, ENVS, IMPACT, TYPES, USERS, SLA_HOURS   # noqa: E402
+from data import APPS, ENVS, IMPACT, TYPES, USERS, SLA_HOURS, ENTITLED   # noqa: E402
 
 SRC = {"confluence": "Confluence", "sharepoint": "SharePoint", "onenote": "OneNote", "gitlab": "GitLab", "google-docs": "Google Docs", "manual": "Added manually"}
 SRC_ICON = {"confluence": "📘", "sharepoint": "🗂️", "onenote": "📓", "gitlab": "🦊", "google-docs": "📄", "manual": "✍️"}
 STATE = {"new": "🔵 New", "in_progress": "🟠 In progress", "resolved": "🟢 Resolved"}
-ORIGIN = {"ai": "🤖 AI-assisted", "manual": "✍️ Manual", "seed": "📁 Sample"}
+ORIGIN = {"ai": "🤖 With AI assistant", "manual": "✍️ Without AI (manual)"}
 TYPE_LABEL = {k: f"{v} ({k})" for k, v in TYPES.items()}
 FILE_TYPES = [e.lstrip(".") for e in sorted(store.ALLOWED_EXT)]
 TEXT_EXT = (".txt", ".log", ".csv", ".json", ".md")
-PAGES = ["💬 Assist", "📊 Dashboard", "🎫 Tickets", "➕ New ticket", "📚 Knowledge"]
-SUGGEST = ["PayFlow 504 timeout on disbursement", "WealthPlan login loop after SSO", "BranchDesk attachment upload fails"]
+AGENT_PAGES = ["💬 Assist", "📊 Dashboard", "🎫 Tickets", "➕ New ticket", "📚 Knowledge"]
+USER_PAGES = ["💬 Assist", "🎫 My tickets", "➕ New ticket", "📚 Knowledge"]
+SUGGEST_USER = ["WealthPlan login loop after SSO", "BranchDesk attachment upload fails", "BranchDesk receipt printer offline"]
+SUGGEST_AGENT = ["PayFlow 504 timeout on disbursement", "PayFlow disbursement stuck pending", "WealthPlan login loop after SSO"]
+# what each role may do on a ticket (UI-level demo of role-based access; a real deployment enforces this on the server from the Entra role)
+CAN = {"user": set(), "l1": {"status", "escalate"}, "l2": {"status", "resolve", "escalate", "publish"}, "l3": {"status", "resolve", "publish"}}
 ss = st.session_state
 
 st.markdown("""<style>
@@ -46,7 +50,9 @@ div[data-testid="stMetric"] {background:#f8fafc; border:1px solid #e5e7eb; borde
 
 # ---------------------------------------------------------------- user, sidebar
 ss.setdefault("user_idx", 0)
-user = USERS[ss.user_idx]; groups = user["groups"]
+user = USERS[ss.user_idx]; groups = user["groups"]; is_agent = user["key"] != "user"; can = CAN[user["key"]]
+PAGES = AGENT_PAGES if is_agent else USER_PAGES
+if ss.get("nav") not in PAGES: ss.nav = PAGES[0]
 def _pick(): ss.user_idx = [u["name"] for u in USERS].index(ss.user_pick)
 
 with st.sidebar:
@@ -56,7 +62,7 @@ with st.sidebar:
     ini = "".join(w[0] for w in user["name"].split())
     st.markdown(f'<div class="usr"><div class="av">{ini}</div><div><b>{user["name"]}</b><br><span>{user["role"]} · {user["team"]}</span></div></div>', unsafe_allow_html=True)
     with st.popover("Switch user", use_container_width=True):
-        st.caption("Demo profiles. Each sees only the documents their access group allows.")
+        st.caption("Demo profiles. Each role is entitled to different documents, pages and ticket actions.")
         st.radio("User", [u["name"] for u in USERS], index=ss.user_idx, key="user_pick", on_change=_pick, format_func=lambda n: f"{n} · {next(u['role'] for u in USERS if u['name'] == n)}")
     if page.endswith("Assist") and st.button("➕ New chat", use_container_width=True):
         for k in ("thread", "msgs", "draft", "status", "files", "show_upload"): ss.pop(k, None)
@@ -89,7 +95,7 @@ def rate(mid):
     if v is not None:
         core.DB.execute("insert into feedback values(?,?,?)", (ss.get("thread", ""), 1 if v == 1 else -1, "")); core.DB.commit(); st.toast("Thanks for the feedback")
 
-def goto_ticket(num): ss.nav = "🎫 Tickets"; ss.sel_ticket = num
+def goto_ticket(num): ss.nav = "🎫 Tickets" if is_agent else "🎫 My tickets"; ss.sel_ticket = num
 def goto(page_name): ss.nav = page_name
 
 def read_files(uploaded):
@@ -126,8 +132,8 @@ def assist():
     act = None; ss.setdefault("msgs", [])
     if not ss.msgs:
         st.markdown(f'<div class="hero"><h1>Hi {user["name"].split()[0]}, how can I help?</h1><p>I check your documents first, ask follow-up questions when needed, and raise a ticket only after you approve. You can attach logs or screenshots.</p></div>', unsafe_allow_html=True)
-        cols = st.columns(len(SUGGEST))
-        for col, s in zip(cols, SUGGEST):
+        sug = SUGGEST_AGENT if is_agent else SUGGEST_USER; cols = st.columns(len(sug))
+        for col, s in zip(cols, sug):
             if col.button(s, use_container_width=True, key=f"sg_{s}"): act = {"message": s}
     for m in ss.msgs:
         with st.chat_message(m["role"], avatar="🧑‍💻" if m["role"] == "user" else "🛟"):
@@ -206,29 +212,47 @@ def assist():
             if failed: ss.msgs[-1]["text"] += " (Some attachments were not added: " + "; ".join(failed) + ")"
         st.rerun()
 
-# ---------------------------------------------------------------- Dashboard
+# ---------------------------------------------------------------- Dashboard (business view)
 def dashboard():
     import pandas as pd
-    st.markdown("## Dashboard"); st.caption(f"Welcome back, {user['name'].split()[0]}. Priorities and SLA targets: P1 {SLA_HOURS[1]}h · P2 {SLA_HOURS[2]}h · P3 {SLA_HOURS[3]}h.")
-    allt = store.list_tickets(); op = [t for t in allt if t["state"] != "resolved"]
+    st.markdown("## Dashboard"); st.caption("How the assistant is changing support: where tickets come from, how complete they are when L2/L3 receive them, and where the SLA is at risk.")
+    bs = store.business_stats(); allt = store.list_tickets(); op = [t for t in allt if t["state"] != "resolved"]
     for t in allt: t["sla"] = store.sla(t)
     risk = [t for t in op if t["sla"]["state"] == "at risk"]; br = [t for t in op if t["sla"]["state"] == "breached"]
+    pct = lambda a, b: f"{round(100 * a / b)}%" if b else "n/a"
+    (ar, ai_n), (mr, man_n) = bs["ready_by"]["ai"], bs["ready_by"]["manual"]
     answered = core.DB.execute("select count(*) as n from conversations where outcome='answered'")[0]["n"]
     m = st.columns(5)
-    m[0].metric("Open tickets", len(op)); m[1].metric("P1 open", sum(t["urgency"] == 1 for t in op)); m[2].metric("SLA at risk", len(risk)); m[3].metric("SLA breached", len(br)); m[4].metric("Answered by assistant", answered, help="Chats resolved from documents without a ticket")
-    c1, c2 = st.columns(2)
+    m[0].metric("Tickets raised", bs["total"]); m[1].metric("Raised with AI", f"{bs['ai']}", pct(bs["ai"], bs["total"]) + " of all tickets", delta_color="off")
+    m[2].metric("Raised without AI", f"{bs['manual']}", pct(bs["manual"], bs["total"]) + " of all tickets", delta_color="off")
+    m[3].metric("Complete: with AI", pct(ar, ai_n), help="Incidents raised through the assistant that already have the application, environment, a specific symptom and evidence")
+    m[4].metric("Complete: without AI", pct(mr, man_n), help="Same check for incidents written by hand without the assistant")
+    st.markdown("### Tickets per application: with AI vs without AI")
+    rows = [r for r in bs["apps"] if r["total"]]
+    c1, c2 = st.columns([3, 2])
     with c1:
-        st.markdown("**Open tickets by priority**"); st.bar_chart(pd.DataFrame({"tickets": [sum(t["urgency"] == p for t in op) for p in (1, 2, 3)]}, index=["P1", "P2", "P3"]))
+        st.bar_chart(pd.DataFrame({"With AI": [r["ai"] for r in rows], "Without AI": [r["manual"] for r in rows]}, index=[APPS.get(r["app"], r["app"]) for r in rows]), color=["#4f46e5", "#9ca3af"])
     with c2:
-        st.markdown("**Tickets by state**"); st.bar_chart(pd.DataFrame({"tickets": [sum(t["state"] == s for t in allt) for s in STATE]}, index=[STATE[s][2:] for s in STATE]))
+        st.dataframe([{"Application": APPS.get(r["app"], r["app"]), "Tickets": r["total"], "With AI": r["ai"], "Without AI": r["manual"], "Open": r["open"], "SLA breached": r["breached"]} for r in rows], hide_index=True, use_container_width=True)
+    st.markdown("### Do tickets arrive with what L2 / L3 need?")
+    st.caption("Four basics for every incident: application, environment, a specific symptom or error, and evidence or steps already tried (logs, attachment, error code, documents checked). User requests are not scored.")
+    need = ["Application", "Environment", "Specific symptom or error", "Evidence or steps already tried"]
+    g1, g2 = st.columns([6, 5])
+    with g1:
+        st.dataframe([{"Raised": "🤖 With AI assistant", "Incidents": ai_n, "Complete": ar, "%": pct(ar, ai_n), "To chase": ai_n - ar},
+                      {"Raised": "✍️ Without AI (manual)", "Incidents": man_n, "Complete": mr, "%": pct(mr, man_n), "To chase": man_n - mr}], hide_index=True, use_container_width=True)
+        st.caption("\"To chase\" = L2/L3 must go back to the requester for more information before they can start.")
+    with g2:
+        st.dataframe([{"Missing information": k, "With AI": bs["missing"]["ai"].get(k, 0), "Without AI": bs["missing"]["manual"].get(k, 0)} for k in need], hide_index=True, use_container_width=True)
+    st.markdown("### Readiness by application")
+    st.dataframe([{"Application": APPS.get(r["app"], r["app"]), "Incidents": r["incidents"], "Complete on arrival": r["ready"], "Complete %": pct(r["ready"], r["incidents"])} for r in rows], hide_index=True, use_container_width=True)
+    k = st.columns(4)
+    k[0].metric("Answered by assistant", answered, help="Chats resolved from the documents without a ticket"); k[1].metric("Open tickets", len(op))
+    k[2].metric("SLA at risk", len(risk)); k[3].metric("SLA breached", len(br))
     st.markdown("### SLA watchlist")
     wl = sorted(br + risk, key=lambda t: t["sla"]["hours_left"])
     if wl: st.dataframe([{"Ticket": t["number"], "Summary": t["short"], "Priority": f"P{t['urgency']}", "Group": t["group"], "SLA": t["sla"]["label"]} for t in wl], hide_index=True, use_container_width=True)
     else: st.success("No tickets at risk.")
-    st.markdown("### Reported by me")
-    mine = [t for t in allt if t["requester"] == user["name"]]
-    if mine: st.dataframe([{"Ticket": t["number"], "Summary": t["short"], "State": STATE[t["state"]], "SLA": t["sla"]["label"]} for t in mine], hide_index=True, use_container_width=True)
-    else: st.caption("You have not reported any tickets yet.")
     st.button("➕ New ticket", type="primary", on_click=goto, args=("➕ New ticket",))
 
 # ---------------------------------------------------------------- New ticket (separate page)
@@ -260,13 +284,13 @@ def new_ticket():
 
 # ---------------------------------------------------------------- Tickets
 def tickets():
-    top = st.columns([4, 1]); top[0].markdown("## Tickets"); top[1].button("➕ New ticket", type="primary", use_container_width=True, on_click=goto, args=("➕ New ticket",))
-    f = st.columns([3, 2, 2, 2, 2])
+    top = st.columns([4, 1]); top[0].markdown("## Tickets" if is_agent else "## My tickets"); top[1].button("➕ New ticket", type="primary", use_container_width=True, on_click=goto, args=("➕ New ticket",))
+    f = st.columns([3, 2, 2, 2, 2] if is_agent else [4, 2, 2])
     q = f[0].text_input("Search", placeholder="Search number or text", label_visibility="collapsed")
     ttype = f[1].selectbox("Type", ["All types", *TYPES], format_func=lambda x: x if x.startswith("All") else TYPE_LABEL[x], label_visibility="collapsed")
     state = f[2].selectbox("State", ["All states", *STATE], format_func=lambda x: x if x.startswith("All") else STATE[x], label_visibility="collapsed")
-    origin = f[3].selectbox("Origin", ["All origins", *ORIGIN], format_func=lambda x: x if x.startswith("All") else ORIGIN[x], label_visibility="collapsed")
-    mine = f[4].toggle("Reported by me")
+    origin = f[3].selectbox("Origin", ["All origins", *ORIGIN], format_func=lambda x: x if x.startswith("All") else ORIGIN[x], label_visibility="collapsed") if is_agent else "All origins"
+    mine = f[4].toggle("Reported by me") if is_agent else True        # a general user only ever sees their own tickets
     rows = store.list_tickets(None if state.startswith("All") else state, None if origin.startswith("All") else origin, q or None, user["name"] if mine else None, None if ttype.startswith("All") else ttype)
     if "flash" in ss: st.success(ss.pop("flash"))
     if not rows: st.info("No tickets match."); return
@@ -281,24 +305,27 @@ def tickets():
         sl = store.sla(t)
         st.markdown(f"### {t['number']} · {t['short']}")
         st.caption(f"{TYPES[t['type']]} · {STATE[t['state']]} · P{t['urgency']} · {sl['label']} · {t['group']} · caller {t['requester']} · {ORIGIN[t['source']]} · created {t['created_at'][:16]} UTC")
-        tab = st.tabs(["Details", "Activity", f"Attachments ({len(t['attachments'])})", "Related"])
+        tab = st.tabs(["Details", "Activity", f"Attachments ({len(t['attachments'])})", "Related"] if is_agent else ["Details", "Activity", f"Attachments ({len(t['attachments'])})"])
         with tab[0]:
             st.text(t["body"])
-            with st.expander("Update status", expanded=False):
-                new = st.selectbox("Status", list(STATE), index=list(STATE).index(t["state"]), format_func=STATE.get, key=f"st_{sel}")
+            if "status" in can:
+              with st.expander("Update status", expanded=False):
+                opts = [x for x in STATE if x != "resolved" or "resolve" in can or t["state"] == "resolved"]
+                new = st.selectbox("Status", opts, index=opts.index(t["state"]), format_func=STATE.get, key=f"st_{sel}")
+                if "resolve" not in can: st.caption("Resolving a ticket needs L2 or L3.")
                 if new == "resolved" and t["state"] != "resolved":
                     note = st.text_area("Resolution note (the fix, so it can be reused)", key=f"rn_{sel}")
                     if st.button("Resolve ticket", type="primary", key=f"rs_{sel}"):
                         try: store.resolve(sel, note, user["name"]); ss.flash = f"{sel} resolved"; st.rerun()
                         except ValueError as e: st.error(str(e))
                 elif new != t["state"]: store.set_state(sel, new, user["name"]); st.rerun()
-            if t["state"] != "resolved" and not t["group"].startswith("L3"):
+            if "escalate" in can and t["state"] != "resolved" and not t["group"].startswith("L3"):
                 with st.expander("Escalate to L3"):
                     note = st.text_area("Hand-off note: what was tried and what is needed", key=f"en_{sel}")
                     if st.button("Escalate to L3 team", key=f"es_{sel}"):
                         try: g = store.escalate(sel, note, user["name"]); ss.flash = f"{sel} escalated to {g}"; st.rerun()
                         except ValueError as e: st.error(str(e))
-            if t["state"] == "resolved" and not any(d["id"] == f"kb-{sel}" for d in store.list_docs()):
+            if "publish" in can and t["state"] == "resolved" and not any(d["id"] == f"kb-{sel}" for d in store.list_docs()):
                 if st.button("📚 Publish the fix to the knowledge base", key=f"pk_{sel}"):
                     try: store.promote_to_kb(sel, user["name"]); ss.flash = "Published. The assistant can now cite this fix."; st.rerun()
                     except ValueError as e: st.error(str(e))
@@ -321,7 +348,8 @@ def tickets():
                     try: store.add_attachment(sel, n, b)
                     except ValueError as e: st.error(str(e)); ok = False
                 if ok: st.rerun()
-        with tab[3]:
+        if is_agent:
+          with tab[3]:
             hits = core.search(f"{t['short']} {t['body']}", groups, t["app"] if t["app"] in APPS else None)
             st.markdown("**Related knowledge**")
             for _, d in hits: st.markdown(f"- {SRC_ICON.get(d['source'], '📄')} **{d['title']}** ({SRC.get(d['source'], d['source'])})  \n  {core.best_sentences(t['short'] + ' ' + t['body'], d['text'])}")
@@ -336,39 +364,44 @@ def tickets():
 def add_doc_dialog():
     title = st.text_input("Title *"); app = st.selectbox("Application", ["all", *APPS], format_func=lambda a: "All applications" if a == "all" else APPS[a])
     src = st.selectbox("Source label", [s for s in SRC if s != "google-docs"], format_func=SRC.get)
+    ent = st.selectbox("Entitled users (who can see it)", list(ENTITLED), format_func=ENTITLED.get, help="Controls which roles the assistant may cite this document to")
     text = st.text_area("Content *", height=200)
     if st.button("Add to knowledge base", type="primary"):
         if len(title.strip()) < 3 or len(text.strip()) < 20: st.error("Add a title and at least a few sentences of content."); return
-        store.add_doc({"title": title.strip(), "text": text.strip(), "app": app, "source": src}); ss.flash = f"Added “{title.strip()}”"; st.rerun()
+        store.add_doc({"title": title.strip(), "text": text.strip(), "app": app, "source": src, "acl": [ent]}); ss.flash = f"Added “{title.strip()}”"; st.rerun()
 
 @st.dialog("Import a Google Doc")
 def import_dialog():
     st.caption("Share the doc as **Anyone with the link can view**, then paste the link. No Google login or key is used; private docs are refused.")
     url = st.text_input("Google Docs link", placeholder="https://docs.google.com/document/d/…/edit")
     app = st.selectbox("Application", ["all", *APPS], format_func=lambda a: "All applications" if a == "all" else APPS[a])
+    ent = st.selectbox("Entitled users (who can see it)", list(ENTITLED), format_func=ENTITLED.get)
     if st.button("Import", type="primary"):
-        try: store.import_gdoc(url, app)
+        try: store.import_gdoc(url, app, acl=[ent])
         except Exception as e: st.error(str(e)); return
         ss.flash = "Imported the Google Doc"; st.rerun()
+
+def ent_label(acl):
+    return ENTITLED['everyone'] if 'everyone' in acl else ENTITLED['staff'] if 'staff' in acl else ENTITLED['l3'] if 'l3' in acl else ', '.join(acl)
 
 def knowledge():
     st.markdown("## Knowledge base")
     if "flash" in ss: st.success(ss.pop("flash"))
     docs = [d for d in store.list_docs() if set(d["acl"]) & set(groups)]
-    st.caption(f"{len(docs)} documents visible to **{user['name']}** ({user['role']}). The assistant only answers from these, and only cites what you can see.")
-    f = st.columns([3, 2, 2, 2])
+    st.caption(f"{len(docs)} documents entitled to **{user['name']}** ({user['role']}). The assistant only answers from these, and only cites what you are entitled to see.")
+    f = st.columns([3, 2, 2, 2] if is_agent else [3, 2])
     q = f[0].text_input("Search", placeholder="Search documents", label_visibility="collapsed")
     src = f[1].selectbox("Source", ["All sources", *SRC], format_func=lambda x: x if x.startswith("All") else SRC[x], label_visibility="collapsed")
-    if f[2].button("➕ Add document", use_container_width=True): add_doc_dialog()
-    if f[3].button("📄 Import Google Doc", use_container_width=True): import_dialog()
+    if is_agent and f[2].button("➕ Add document", use_container_width=True): add_doc_dialog()
+    if is_agent and f[3].button("📄 Import Google Doc", use_container_width=True): import_dialog()
     docs = [d for d in docs if (src.startswith("All") or d["source"] == src) and (not q or q.lower() in (d["title"] + d["text"]).lower())]
     if not docs: st.info("No documents match."); return
-    table = [{"Title": d["title"], "Source": f"{SRC_ICON.get(d['source'], '📄')} {SRC.get(d['source'], d['source'])}", "App": d["app"], "Access": ", ".join(d["acl"]), "Added": d["added_at"][:10]} for d in docs]
+    table = [{"Title": d["title"], "Source": f"{SRC_ICON.get(d['source'], '📄')} {SRC.get(d['source'], d['source'])}", "App": d["app"], "Entitled users": ent_label(d["acl"]), "Added": d["added_at"][:10]} for d in docs]
     ev = st.dataframe(table, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row", key="kbtbl")
     if ev.selection.rows:
         d = docs[ev.selection.rows[0]]
         with st.container(border=True):
-            st.markdown(f"### {d['title']}"); st.caption(f"{SRC.get(d['source'], d['source'])} · app: {d['app']} · access: {', '.join(d['acl'])}"); st.write(d["text"])
+            st.markdown(f"### {d['title']}"); st.caption(f"{SRC.get(d['source'], d['source'])} · app: {d['app']} · entitled: {ent_label(d['acl'])}"); st.write(d["text"])
     else: st.caption("Select a row to read the document.")
 
-{"💬 Assist": assist, "📊 Dashboard": dashboard, "🎫 Tickets": tickets, "➕ New ticket": new_ticket, "📚 Knowledge": knowledge}[page]()
+{"💬 Assist": assist, "📊 Dashboard": dashboard, "🎫 Tickets": tickets, "🎫 My tickets": tickets, "➕ New ticket": new_ticket, "📚 Knowledge": knowledge}[page]()
