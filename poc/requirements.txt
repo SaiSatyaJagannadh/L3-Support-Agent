@@ -1,9 +1,8 @@
+-r ../requirements.txt
+# API, tests and red team (not needed to run or deploy the Streamlit app)
 fastapi
 uvicorn
-langgraph
-openai
 pydantic
-pytest
-httpx
 pyjwt[crypto]
+pytest
 pyrit

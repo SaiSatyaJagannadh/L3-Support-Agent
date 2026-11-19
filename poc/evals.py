@@ -1,4 +1,5 @@
 """Golden-set eval (release gate): retrieval recall@3, citation accuracy, routing accuracy."""
+import os; os.environ.setdefault("POC_DB", ":memory:")
 import uuid, sys, core
 from data import GOLDEN, RULES, ADVERSARIAL
 

@@ -13,9 +13,10 @@ def crawl_confluence(space):
     base = os.environ["CONFLUENCE_URL"]
     r = httpx.get(f"{base}/rest/api/content", params={"spaceKey": space, "expand": "body.storage,restrictions.read.restrictions.group"},
                   auth=(os.environ["CONFLUENCE_USER"], os.environ["CONFLUENCE_TOKEN"]), timeout=30); r.raise_for_status()
-    return [{"id": f"cf-{p['id']}-{i}", "source": "confluence", "url": f"{base}{p['_links']['webui']}", "acl": ["staff"],  # TODO map space perms -> Entra groups
+    return [{"id": f"cf-{p['id']}-{i}", "source": "confluence", "url": f"{base}{p['_links']['webui']}", "app": "all", "title": p.get("title", ""), "acl": ["staff"],  # TODO map space perms -> Entra groups
              "text": c} for p in r.json()["results"] for i, c in enumerate(chunk(re.sub(r"<[^>]+>", " ", p["body"]["storage"]["value"])))]
 
-def run(index):  # index = core.KB list (stand-in for AI Search upload)
-    if os.getenv("CONFLUENCE_URL"): index += crawl_confluence(os.getenv("CONFLUENCE_SPACE", "L3"))
-    return len(index)
+def run(add):  # add = store.add_doc (stand-in for the AI Search upload); returns number of docs indexed
+    docs = crawl_confluence(os.getenv("CONFLUENCE_SPACE", "L3")) if os.getenv("CONFLUENCE_URL") else []
+    for d in docs: add(d)
+    return len(docs)

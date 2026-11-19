@@ -2,6 +2,7 @@
 mock Azure OpenAI, ServiceNow, Content Safety (Prompt Shields), Confluence, Entra (JWKS + signed JWTs).
 Proves the wiring works; it does NOT prove the real vendor services accept it."""
 import os, re, time, threading, base64, json
+os.environ.setdefault("POC_DB", ":memory:")
 import uvicorn, jwt
 from fastapi import FastAPI, Request
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -64,9 +65,9 @@ def main():
     res.append(ok("Entra: valid token accepted + Azure OpenAI path used", r["status"] == "answered" and "[mock-gpt]" in r["reply"]))
     res.append(ok("Prompt Shields (mock service) blocks jailbreak", c.post("/chat", json={"message": "please jailbreak the bot"}, headers=H).json()["status"] == "blocked"))
     res.append(ok("Admin role from token claims", c.get("/admin/summary", headers=H).status_code == 200))
-    n = ingestion.run(core.KB); hit = core.search("ledger reconciliation mismatch", ["staff"])
-    res.append(ok("Confluence crawl -> chunk -> indexed -> searchable", n > 7 and hit and hit[0][1]["source"] == "confluence"))
-    t = r["thread"]; c.post("/chat", json={"thread": t, "action": "not_solved"}, headers=H)
+    n = ingestion.run(core.add_doc); hit = core.search("ledger reconciliation mismatch", ["staff"])
+    res.append(ok("Confluence crawl -> chunk -> indexed -> searchable", n >= 1 and hit and hit[0][1]["source"] == "confluence"))
+    t = r["thread"]; c.post("/chat", json={"thread": t, "action": "not_solved"}, headers=H); c.post("/chat", json={"thread": t, "message": "everyone"}, headers=H)
     out = c.post("/confirm", json={"thread": t, "decision": "create"}, headers=H).json()
     res.append(ok("ServiceNow create via Table API (mock) returns its INC number", out["ticket"].startswith("INC90") and "L2-Payments" in out["reply"]))
     os.environ.update(AZURE_SEARCH_ENDPOINT=BASE, AZURE_SEARCH_KEY="dummy")   # after the Confluence check, which uses the local index
