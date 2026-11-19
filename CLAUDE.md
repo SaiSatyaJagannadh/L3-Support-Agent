@@ -4,40 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A local proof of concept of the L3 support agent designed in `L3SupportAgent-project.md` (the architecture spec; its last section, "POC status", lists what is built vs stubbed). `POC-NOTES.md` has the env-var/key list. Nothing is deployed; nothing needs real accounts to run.
+A local proof of concept of the L3 support agent designed in `L3SupportAgent-project.md` (its last section, "POC status", lists what is built vs stubbed). `README.md` is the entry point; `POC-NOTES.md` has the demo script, keys and deploy steps. Nothing needs real accounts or keys to run.
 
 ## Commands
 
-Run from `poc/` unless noted. Install: `pip install -r requirements.txt` (Python 3.12; includes pyrit, which is large).
+Run from the repo root unless noted. `pip install -r requirements.txt` runs the app; `pip install -r poc/requirements.txt` adds API/test/red-team deps (pyrit is large).
 
 ```
-python3 -m pytest -q --ignore=test_e2e.py     # unit tests
-python3 -m pytest -q test_poc.py::test_acl_trimming_and_injection   # single test
-python3 evals.py                               # golden + adversarial gate (exit 1 if below threshold)
-python3 redteam.py                             # PyRIT converter attacks against the graph in-process
-python3 dummy_run.py                           # starts local mock Azure/ServiceNow/Confluence/Entra/etc on :9000 and exercises the real integration code paths
-python3 -m uvicorn main:app --port 8000        # API + plain HTML UI at /
-python3 loadtest.py http://localhost:8000 100  # needs server running
-python3 pyrit_attack.py                        # real PyRIT attack run; needs server on :8000
-python3 -m pytest -q test_e2e.py               # Playwright; needs server on :8000 and `playwright install chromium`
+streamlit run streamlit_app.py                 # the UI, http://localhost:8501 (also the Streamlit Cloud entry point)
+cd poc && python3 -m pytest -q                 # all tests (agent, API, DB, Streamlit UI via AppTest)
+cd poc && python3 -m pytest -q test_poc.py::test_link_adds_comment_instead_of_duplicate   # single test
+cd poc && python3 evals.py                     # golden + adversarial gate (exit 1 if below threshold)
+cd poc && python3 redteam.py                   # PyRIT converter attacks against the graph in-process
+cd poc && python3 dummy_run.py                 # local mock Azure/ServiceNow/Confluence/Entra on :9000; exercises the real integration code paths
+cd poc && python3 -m uvicorn main:app --port 8000   # optional REST API
+cd poc && python3 pyrit_attack.py              # real PyRIT attack run; needs the API on :8000
+./run_poc.sh                                   # tests + evals + red team + mocks + docker build + helm/bicep checks
 ```
 
-React UI: `cd apps/web && npm install && npm run dev` (:5173, proxies to :8000); `npm run build` type-checks.
-Infra checks (repo root): `helm lint infra/helm`, `helm template infra/helm`, `az bicep build --file infra/main.bicep --stdout`, `docker build poc`. `./run_poc.sh` chains the test/build/validate stages (macOS has no `timeout` binary).
+Reset the demo database by deleting `l3.db`. Regenerate the architecture image: render `docs/architecture.html` with Playwright to `docs/architecture.png`.
 
 ## Architecture
 
-Everything backend lives in `poc/core.py`: one LangGraph `StateGraph` (state `S`) compiled with an in-memory checkpointer, plus the helpers it calls (redaction, search, LLM, SQLite audit/tickets/rules). `main.py` is a thin FastAPI wrapper; `core.run(thread, **inp)` is the single entry point used by the API, `evals.py` and `redteam.py`.
+`streamlit_app.py` runs the agent in-process (no API needed). It calls `core.run(thread, _t=..., groups=..., message=... | action="not_solved" | resume=...)`, the single entry point also used by `main.py` (FastAPI), `evals.py` and `redteam.py`.
 
-Graph routing: `START` → `intake` (PII redact, injection check) → `triage` (slot filling for app/env, max 3 clarify turns, ends the turn with a question) → `knowledge` (cited answer). A separate `action="not_solved"` entry goes `logs` → `similar` → `draft` → `approve` → `create`. `approve` calls `interrupt()`; the API returns `status: needs_approval` and `POST /confirm` resumes with `Command(resume=...)` (create / cancel / link). Nothing is written to the ticket table before that resume. Ticket assignment comes from the `rules` table, never the LLM; creation is idempotent on the draft id.
+- `poc/db.py`: SQLite connection (`POC_DB`, default `l3.db`; `:memory:` in tests), schema, seed data, tiny `.env` loader. `DB.execute` returns fully fetched rows (`sqlite3.Row`), `DB.rows` returns dicts.
+- `poc/store.py`: all ticket / comment / document access (`create_ticket`, `import_gdoc`, ...). The agent, API and UI all go through it so AI-created and manual tickets live in one `tickets` table (`source` = `ai` / `manual` / `seed`).
+- `poc/core.py`: guardrails, retrieval, LLM answer, and one LangGraph `StateGraph` with an in-memory checkpointer. Chat path: `intake → triage → knowledge`. `action="not_solved"` path: `collect → logs → similar → draft → approve → create`. `approve` calls `interrupt()`; the caller resumes with `Command(resume={decision: create|cancel|link})`. Nothing is written to `tickets` before that resume. Priority comes from `data.URGENCY[impact]` and the assignment group from the `rules` table, never the LLM.
+- Every node appends plain-English lines to `trace`, which the UI shows as "How I got this answer". Keep that in sync when changing node behaviour.
+- Knowledge docs are Markdown files with front matter in `poc/kb/` (loaded by `data.py`, seeded into `kb_docs`).
 
-Integrations are env-gated inside `core.py`/`auth.py`/`ingestion.py` and fall back to local behaviour when unset: Azure OpenAI (`answer`), Azure AI Search (`search_azure`), Prompt Shields (`shielded`), ServiceNow Table API (in `create`, `SN_BASE` overrides the host), Confluence crawl, Entra JWT (`auth.user`, `AAD_AUTHORITY` overrides the host). Unset means: extractive answer, in-memory token-overlap search over `data.KB`, regex injection check, local `tickets` table, header-based identity (`X-User-Groups`, `X-User-Roles`). `dummy_run.py` flips all of these on against local mocks.
+Integrations are env-gated and fall back to local behaviour when unset: Azure OpenAI (`core.answer`), Azure AI Search (`core.search_azure`), Prompt Shields (`core.shielded`), ServiceNow (`store.create_ticket`, `SN_BASE` overrides the host), Confluence crawl (`ingestion.py`), Entra JWT (`auth.user`, `AAD_AUTHORITY` overrides the host). `dummy_run.py` switches them all on against local mocks. Streamlit secrets are copied into `os.environ` at startup.
 
 ## Gotchas
 
-- `_t` (thread id) is a field in the graph state `S` on purpose: nodes use it for audit/unanswered logging. Callers pass it as `_t=` to `core.run`; `main.chat` does this.
-- State is global per process: `core.DB` is one shared in-memory SQLite connection (wrapped in `_DB` with a lock, `execute` returns fully fetched rows), and tests share it. `test_decline_creates_nothing` expects the ticket created by the earlier test to exist, so test order matters.
-- `data.KB` is mutated by `ingestion.run` and read by the mocks in `dummy_run.py`; ACL is by group name in each doc's `acl` list. One doc is deliberately L3-only and one deliberately contains an injection string; `search` must never return them to `staff`.
-- Retrieval confidence threshold (0.3 overlap) decides "answer" vs "no documented answer"; changing `data.py` docs or `GOLDEN` can break `evals.py` thresholds.
-- PyRIT 1.1.0 moved modules (`pyrit.converter`, not `pyrit.prompt_converter`); attack outcomes report UNDETERMINED because no scoring LLM is configured, so pass/fail is judged from API state.
-- Auth stays in dev-header mode unless `AAD_TENANT_ID` is set, in which case every route using `Depends(user)` needs a valid bearer token.
+- `_t` (thread id) is a field of the graph state `S` on purpose; callers must pass it.
+- Graph state persists per thread, so stale values leak into later turns. `core.run` therefore returns citations only when `status == "answered"`; the draft still reads the saved citations internally. `want_ticket` / `awaiting` route a reply to the pending ticket follow-up, and a reply that doesn't answer it is treated as a new question.
+- State is global per process: `core.DB` is one shared connection and `core` is imported once, so Streamlit visitors and tests share data. `conftest.py` sets `POC_DB=:memory:` before any import; tests assert counts relative to before, not absolute.
+- Retrieval needs at least two matching key terms (`terms()` drops stopwords and app/env names); app-specific docs are filtered by the detected app, `all` docs match any app. Changing `poc/kb/*.md` or `data.GOLDEN` can break `evals.py` thresholds and `test_poc.py` assertions on doc ids.
+- Two documents are test fixtures: `kb4` (L3-only, must never reach `staff`) and `kb5` (contains an injection string, must never be returned).
+- Streamlit `AppTest` keeps stale elements after `st.rerun()` in its tree; assert on `at.session_state` or real-browser behaviour for "this disappeared" checks.
+- PyRIT 1.1.0 moved modules (`pyrit.converter`); attack outcomes are UNDETERMINED without a scoring LLM, so pass/fail is judged from app state.
+- The earlier React UI (`apps/web`) and plain HTML page were removed; they remain in git history.

@@ -1,65 +1,65 @@
-# L3 Support Agent
+# L3 Assist
 
-An L3 support assistant that answers from indexed docs with citations, asks follow-up questions until the issue is clear, checks logs and similar tickets, and creates a ServiceNow ticket only after the user confirms. The full design is in [`L3SupportAgent-project.md`](L3SupportAgent-project.md).
+An AI-assisted L3 support product. It answers from your documents with citations, asks follow-up questions until the problem is clear, checks logs and similar tickets, and raises a ticket **only after the user approves**. Tickets can also be created by hand, with no AI.
 
-This repo holds a **local proof of concept**. It runs with no cloud accounts: everything that would need Azure, ServiceNow, Confluence or Entra has a local stand-in or a mock.
+![Architecture](docs/architecture.png)
 
-## How it works
+The full design is in [`L3SupportAgent-project.md`](L3SupportAgent-project.md). This repo is a working proof of concept: it runs with **no keys and no cloud accounts** on built-in sample data (three fictional apps, 15 runbooks, 8 sample tickets). Real systems plug in through environment variables.
 
-```
-user message -> intake (PII redaction, injection check) -> triage (app / env follow-ups, max 3)
-  -> knowledge (answer with citations, access-filtered)
-  -> "still stuck": log insights -> similar tickets -> ticket draft
-  -> user approval -> create ticket, routed by a rules table
-```
-
-LangGraph runs the flow in `poc/core.py`. The approval step is a graph interrupt, so nothing is written to the ticket table until the user confirms.
-
-## Quick start
-
-Needs Python 3.12 and Node 20+. Docker, `helm` and `az` are only needed for the infra checks.
+## Run the demo
 
 ```bash
-cd poc
 pip install -r requirements.txt
-python3 -m uvicorn main:app --port 8000    # API + simple UI at http://localhost:8000
+streamlit run streamlit_app.py        # http://localhost:8501
 ```
 
-React UI (separate terminal):
+Nothing else is needed. Try: click "PayFlow 504 timeout on disbursement" → answer the follow-up ("prod") → read the cited answer and **How I got this answer** → "Still stuck? Raise a ticket" → answer the impact question → review the draft → Submit.
 
-```bash
-cd apps/web && npm install && npm run dev  # http://localhost:5173
-```
+## What you can show
 
-Try: "PayFlow 504 timeout" -> answer "prod" -> "Still stuck? Raise a ticket" -> Submit.
+| Page | What it does |
+| --- | --- |
+| 💬 Assistant | Chat with follow-up chips, streamed cited answers, a plain-English explanation of every answer, 👍/👎, AI-drafted tickets with similar-ticket matching and an approval step |
+| 🎫 Tickets | Pre-created sample tickets plus anything you create. Filter by state or origin (AI / manual / sample), open a ticket, comment, change status, **New ticket** without AI |
+| 📚 Knowledge | Browse the documents the current role may see, paste a new one, or import a public Google Doc by link |
+
+The sidebar role picker ("Support staff" / "L3 engineer") shows access control: the L3-only runbook only appears for L3.
+
+## Deploy on Streamlit Community Cloud
+
+1. Push this repo to GitHub (done: `SaiSatyaJagannadh/L3-Support-Agent`).
+2. At [share.streamlit.io](https://share.streamlit.io) choose **Create app**, pick the repo and branch `main`, set the main file to `streamlit_app.py`, and deploy. Cloud installs the root `requirements.txt`.
+3. Keys are optional. To add any, paste them under **Settings → Secrets** (format in `.streamlit/secrets.toml.example`).
+
+Cloud storage is temporary, so the SQLite database resets to the sample data whenever the app restarts, and all visitors share one database.
+
+## Data
+
+SQLite file `l3.db` (created on first run; delete it to reset). Tables: `tickets` (source `ai` / `manual` / `seed`), `ticket_comments`, `kb_docs`, `conversations`, `messages`, `rules` (ticket routing), `logs`, `feedback`, `unanswered` (knowledge gaps), `audit`. Sample documents live in `poc/kb/*.md`.
+
+## Keys (all optional)
+
+Copy `.env.example` to `.env`. With nothing set, answers quote the best-matching document text. See [`POC-NOTES.md`](POC-NOTES.md) for what each key turns on.
 
 ## Checks
 
 ```bash
-cd poc
-python3 -m pytest -q --ignore=test_e2e.py   # unit tests
-python3 evals.py                            # golden + adversarial eval gate
-python3 redteam.py                          # PyRIT converter attacks
-python3 dummy_run.py                        # integrations against local mock services
+cd poc && pip install -r requirements.txt
+python3 -m pytest -q        # agent, API, database and Streamlit UI tests
+python3 evals.py            # answer quality and safety gate
+python3 redteam.py          # PyRIT attacks
+python3 dummy_run.py        # integrations against local mock services
 ```
 
-`./run_poc.sh` chains the test, build and manifest-validation stages.
+`./run_poc.sh` runs all of the above plus the Docker build and the Helm/Bicep checks.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
-| `poc/` | FastAPI app, LangGraph agent, synthetic data, tests, evals, red team, load test |
-| `apps/web/` | React + TypeScript + Fluent UI + MSAL front end |
-| `infra/` | Bicep skeleton, Helm chart, Kubernetes manifest |
-| `.gitlab-ci.yml` | Test (with eval gate), build, deploy stages |
-| `POC-NOTES.md` | What was built, stand-ins, and every key to add for real services |
-| `CLAUDE.md` | Guidance for Claude Code working in this repo |
-
-## Using real services
-
-Set the environment variables listed in [`POC-NOTES.md`](POC-NOTES.md) (copy `poc/.env.example`) for Azure OpenAI, Entra, Prompt Shields, Azure AI Search, ServiceNow and Confluence. With none set, the POC answers from local docs and stores tickets in SQLite.
-
-## Status
-
-Verified locally: unit tests, eval gate, red team, browser test, load test, dummy-service integration checks, Docker build, `helm lint`, `az bicep build`. Not done: Azure SQL (SQLite stands in), deploying to a cluster, running the GitLab pipeline, and any run against the real vendor services.
+| `streamlit_app.py` | The UI (runs the agent in-process) |
+| `poc/core.py` | LangGraph agent: guardrails, retrieval, answers, ticket flow |
+| `poc/db.py`, `poc/store.py` | SQLite schema, seed data, ticket/document data access |
+| `poc/kb/`, `poc/data.py` | Sample documents, tickets, routing rules, eval sets |
+| `poc/main.py` | Optional REST API over the same agent and store |
+| `infra/`, `Dockerfile`, `.gitlab-ci.yml` | Helm, Bicep, container and CI |

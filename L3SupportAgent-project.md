@@ -334,36 +334,41 @@ Ship answers first, ticketing second, extra sources third; each phase ends at a 
 - LangGraph supervisor patterns: [supervisor vs swarm](https://dev.to/focused_dot_io/multi-agent-orchestration-in-langgraph-supervisor-vs-swarm-tradeoffs-and-architecture-1b7e), [customer-support multi-agent example](https://github.com/r-prem/fork_Multi-Agent-AI-System)
 - LangGraph MS SQL checkpointers: [langgraph-checkpoint-mssql](https://pypi.org/project/langgraph-checkpoint-mssql/), [langgraph-azure-sql-db-checkpoint](https://pypi.org/project/langgraph-azure-sql-db-checkpoint/)
 
-## POC status — what was built (as of Nov 12, 2026)
+## POC status — what was built (as of Nov 18, 2026)
 
-A local proof of concept of the design above exists in this repo. Nothing is deployed, committed or pushed. Details, keys and run steps are in `POC-NOTES.md`.
+A working proof of concept of this design is in the repo and runs with no keys. Run it with `streamlit run streamlit_app.py`; keys, deployment and the demo script are in `POC-NOTES.md`.
 
-**Built and verified locally**
+![Architecture as built](docs/architecture.png)
+
+**Product experience (Streamlit, SaaS style, no admin screen)**
+
+- **Assistant**: chat with follow-up chips, streamed answers with citation chips that open the source, a "How I got this answer" explanation on every message, 👍/👎, and a draft-ticket card with similar tickets, their fixes, and Submit / Cancel / "Same issue".
+- **Tickets**: eight pre-created sample tickets, filters (state, origin: AI / manual / sample), a detail view with comments and status, and **New ticket** for creating tickets by hand without AI. AI and manual tickets share one table, so manual tickets also feed similar-ticket matching.
+- **Knowledge**: browse documents the current role may see, paste a document, or import a public Google Doc by link. A role picker (Support staff / L3 engineer) demonstrates access control.
+
+**How the AI flow works**
+
+1. Intake masks card numbers and emails and blocks prompt-injection attempts.
+2. Triage asks for the application and environment (up to 3 follow-ups).
+3. Knowledge searches only documents the user may see and answers from them with citations. With fewer than two matching key terms it says so and offers a ticket.
+4. "Still stuck" starts the ticket flow with its own follow-ups (application, environment, impact), then reads logs with a fixed read-only query, finds similar tickets, and drafts the ticket.
+5. The graph pauses for approval. Only after Submit is the ticket created. Priority comes from the impact (everyone P1, team P2, just me P3) and the assignment group from the `rules` table; the AI decides neither.
+
+**Database (SQLite file `l3.db`, stand-in for Azure SQL)**: `conversations`, `messages`, `kb_docs`, `tickets` (source `ai` / `manual` / `seed`), `ticket_comments`, `rules`, `logs`, `feedback`, `unanswered` (knowledge gaps), `audit`.
 
 | Spec area | What exists | Where |
 | --- | --- | --- |
-| Agents / orchestration | LangGraph: intake (PII redaction, injection block) → triage (max 3 follow-ups) → knowledge (cited, access-filtered answers) → log insights → similar tickets → draft → **approval interrupt** → idempotent ticket create, routed by a rules table | `poc/core.py` |
-| API | FastAPI: `/chat`, `/chat/stream` (SSE), `/confirm`, `/tickets`, `/feedback`, `/admin/summary` | `poc/main.py` |
-| Auth | Entra JWT validation (signature, audience, issuer; app roles) when `AAD_*` set, else dev header stub | `poc/auth.py` |
-| Frontend | React + TypeScript + Vite + Fluent UI v9 + MSAL React. Interactive: answers stream over SSE (`/chat/stream`), example and quick-reply chips for the clarify step (app / environment), clickable citation chips, 👍/👎 per answer, draft-ticket card with Submit / Cancel / "Same as INC…" (input locked until the user decides), result badge with the INC number, tabs for My tickets and Admin (eval gate, feedback, KB gaps), New chat, error banner. A plain HTML page is also served by the API. | `apps/web/src/App.tsx`, `poc/static` |
-| Retrieval / ingestion | Token-overlap search with per-doc access groups; heading chunker and Confluence REST crawler (env-gated) | `poc/core.py`, `poc/ingestion.py` |
-| Test data | 3 fake apps, 7 synthetic KB docs (Confluence, SharePoint, OneNote, GitLab; one L3-only, one poisoned), 3 tickets, logs, golden and adversarial sets | `poc/data.py` |
-| Evals / security | Golden + adversarial eval gate; PyRIT converter red team (12 attacks, 0 failures) and PyRIT `PromptSendingAttack` run (9 attacks, 0 tickets written) | `poc/evals.py`, `poc/redteam.py`, `poc/pyrit_attack.py` |
-| Testing | 6 pytest tests, Playwright test of the plain page, 3 Playwright tests of the React UI (chips, streaming, citations, feedback, draft/approval lock, Submit, My tickets, Admin, Cancel, New chat, injection block; all pass), load test (100/100, p95 about 530 ms) | `poc/test_poc.py`, `poc/test_e2e.py`, `poc/test_e2e_react.py`, `poc/loadtest.py` |
-| Integrations (dummy) | Local mocks for Azure OpenAI, AI Search, Prompt Shields, ServiceNow, Confluence and Entra: 9/9 checks pass | `poc/dummy_run.py` |
-| Infra / CI | Bicep skeleton (compiles), Helm chart (lints and renders), k8s manifest, Dockerfile (builds), `.gitlab-ci.yml`, `run_poc.sh` | `infra/`, `.gitlab-ci.yml`, `run_poc.sh` |
+| Agents / orchestration | LangGraph: intake → triage → knowledge, and collect → logs → similar → draft → approval → create | `poc/core.py` |
+| Front end | Streamlit app (replaces the React app in the spec; the earlier React build is in git history) | `streamlit_app.py` |
+| Data | SQLite schema, seed data, ticket/document access | `poc/db.py`, `poc/store.py`, `poc/data.py` |
+| Knowledge | 15 sample runbooks tagged Confluence / SharePoint / OneNote / GitLab / Google Docs, including an L3-only doc and a deliberately poisoned doc | `poc/kb/*.md` |
+| REST API (optional) | `/chat`, `/chat/stream` (SSE), `/confirm`, `/tickets`, `/kb`, `/feedback`, `/admin/summary`; Entra token check when configured | `poc/main.py`, `poc/auth.py` |
+| Ingestion | Heading chunker and Confluence crawler (env-gated) | `poc/ingestion.py` |
+| Quality | 17 tests (agent, API, DB, Streamlit UI), eval gate, PyRIT red team (12 attacks, 0 failures), load test, mock-service integration run (9/9) | `poc/test_*.py`, `evals.py`, `redteam.py`, `pyrit_attack.py`, `loadtest.py`, `dummy_run.py` |
+| Infra / CI | Dockerfile, Helm chart, Bicep skeleton, GitLab CI, `run_poc.sh` | repo root, `infra/` |
 
-**Stand-ins used instead of the real thing**
+**Stand-ins used instead of the real thing**: SQLite for Azure SQL; keyword search for Azure AI Search; quoted document text for Azure OpenAI answers; mock services for Azure, ServiceNow, Confluence and Entra (code is wired and switches on with keys, but was never run against the real services); manifests that render and compile but were never deployed; the GitLab pipeline never ran on GitLab.
 
-- Azure SQL → SQLite; LangGraph checkpoints in memory.
-- Azure AI Search hybrid → in-memory token-overlap scoring (a REST path for the real service is coded and tested against a mock only).
-- Azure OpenAI → extractive answer without keys (real path coded, tested against a mock only).
-- ServiceNow, Confluence, Entra, Prompt Shields → coded, tested against local mocks only.
-- AKS / Bicep deploy and the GitLab pipeline → manifests render and validate locally; never deployed or run on GitLab.
-- APIM / MCP servers → not built; the in-process tools stand in.
-
-**Not built**
-
-APIM and MCP servers, VNet/private endpoints/WAF in Bicep, OneNote and GitLab crawlers, SharePoint ACL mapping, SQL Server checkpointer, My-tickets sync from ServiceNow, KB-gap loop into Confluence, UAT and Azure Load Testing, file attachments and editing the ticket draft in the UI, and accessibility testing (WCAG).
+**Not built**: APIM and MCP servers, VNet / private endpoints / WAF in Bicep, OneNote and GitLab crawlers, SharePoint ACL mapping, SQL Server checkpointer, ServiceNow ticket-status sync, the KB-gap loop into Confluence, UAT, Azure Load Testing, file attachments, editing the draft in the UI, accessibility testing, and an admin dashboard in the UI (a `/admin/summary` API remains).
 
 **Open questions above are still unanswered.**

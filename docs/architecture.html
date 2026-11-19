@@ -1,0 +1,69 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box} body{margin:0;background:#f8fafc;font:15px/1.35 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#111827}
+.wrap{width:1700px;padding:34px 40px 30px}
+h1{margin:0;font-size:30px;letter-spacing:-.02em} .sub{color:#6b7280;margin:4px 0 22px;font-size:15px}
+.layer{border:2px solid #c7d2fe;background:#fff;border-radius:16px;padding:14px 18px;margin-bottom:12px;position:relative}
+.layer>.t{position:absolute;top:-12px;left:18px;background:#4f46e5;color:#fff;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 10px;border-radius:999px}
+.row{display:flex;gap:12px;align-items:stretch} .box{flex:1;border:1.5px solid #d1d5db;border-radius:10px;padding:10px 12px;background:#fff}
+.box b{display:block;margin-bottom:3px} .box small{color:#6b7280;font-size:12.5px;display:block}
+.arrow{align-self:center;color:#4f46e5;font-size:24px;font-weight:700;flex:0}
+.down{text-align:center;color:#4f46e5;font-size:22px;font-weight:700;line-height:14px;margin:-2px 0 4px}
+.ui{background:#eef2ff;border-color:#a5b4fc} .ai{background:#f5f3ff;border-color:#c4b5fd} .db{background:#ecfdf5;border-color:#6ee7b7}
+.hum{background:#fff7ed;border:2.5px solid #f97316} .opt{border-style:dashed;background:#fffbeb;border-color:#f59e0b}
+.pill{display:inline-block;background:#e0e7ff;color:#3730a3;border-radius:999px;padding:1px 8px;font-size:12px;margin:2px 3px 0 0}
+.grid2{display:flex;gap:12px} .col{flex:1}
+.leg{display:flex;gap:22px;margin-top:6px;color:#4b5563;font-size:13px;align-items:center} .sw{display:inline-block;width:16px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+</style></head><body><div class="wrap">
+<h1>L3 Assist: architecture (POC as built)</h1>
+<div class="sub">Answers from documents with citations, asks follow-up questions, checks logs and similar tickets, and creates a ticket only after the user approves. Runs locally with no keys; real systems plug in through environment variables.</div>
+
+<div class="layer"><div class="t">1 · Users and front end</div>
+ <div class="row"><div class="box ui"><b>Users</b><small>Support staff · L3 engineers · (role picker decides which documents they may see)</small></div><div class="arrow">→</div>
+ <div class="box ui" style="flex:4"><b>Streamlit app (streamlit_app.py): deployable on Streamlit Cloud</b>
+  <span class="pill">💬 Assistant: chat, follow-up chips, citations, "How I got this answer", 👍/👎, draft-ticket card</span>
+  <span class="pill">🎫 Tickets: list, filters, create manually (no AI), comments, status</span>
+  <span class="pill">📚 Knowledge: browse, add document, import Google Doc by link</span></div>
+ <div class="box ui" style="flex:1.2"><b>REST API (optional)</b><small>FastAPI + SSE streaming + Entra token check, same agent and store</small></div></div></div>
+<div class="down">▼</div>
+
+<div class="layer"><div class="t">2 · Agent core (poc/core.py, LangGraph state machine)</div>
+ <div class="row">
+  <div class="box ai"><b>1 Intake</b><small>PII masking · prompt-injection check</small></div><div class="arrow">→</div>
+  <div class="box ai"><b>2 Triage</b><small>asks app / environment (max 3 follow-ups)</small></div><div class="arrow">→</div>
+  <div class="box ai"><b>3 Knowledge</b><small>access-filtered search → cited answer, or "no documented answer"</small></div></div>
+ <div style="text-align:center;margin:6px 0;color:#6b7280;font-size:13px">user says "still stuck" ▼</div>
+ <div class="row">
+  <div class="box ai"><b>4 Collect</b><small>follow-ups: app · environment · impact</small></div><div class="arrow">→</div>
+  <div class="box ai"><b>5 Log insights</b><small>fixed read-only log query</small></div><div class="arrow">→</div>
+  <div class="box ai"><b>6 Similar tickets</b><small>link a duplicate + show its fix</small></div><div class="arrow">→</div>
+  <div class="box ai"><b>7 Draft</b><small>urgency from impact (rule, not AI)</small></div><div class="arrow">→</div>
+  <div class="box hum"><b>8 ★ Human approval</b><small>graph pauses (interrupt). Submit / Cancel / Same issue. Nothing is written before this.</small></div><div class="arrow">→</div>
+  <div class="box ai"><b>9 Create ticket</b><small>group from routing rules table · idempotent</small></div></div>
+ <div style="margin-top:8px"><span class="pill">Every node adds a plain-English line to the trace ("How I got this answer")</span><span class="pill">Messages, outcomes and audit log saved per conversation</span></div></div>
+<div class="down">▼ ▲</div>
+
+<div class="grid2">
+ <div class="layer col"><div class="t">3 · Data (SQLite file l3.db → Azure SQL later)</div>
+  <div class="box db"><b>Tables</b>
+   <span class="pill">tickets (source: ai · manual · seed)</span><span class="pill">ticket_comments</span><span class="pill">kb_docs</span><span class="pill">conversations</span><span class="pill">messages</span><span class="pill">rules (routing)</span><span class="pill">logs</span><span class="pill">feedback</span><span class="pill">unanswered (KB gaps)</span><span class="pill">audit</span>
+   <small style="margin-top:6px">Tickets made by the AI and by hand share one table, so manual tickets also feed the similar-ticket search. Delete l3.db to reset the demo.</small></div></div>
+ <div class="layer col"><div class="t">4 · Knowledge sources</div>
+  <div class="box db"><b>kb/*.md sample runbooks (15)</b><small>tagged Confluence · SharePoint · OneNote · GitLab · Google Docs, with app and access group. Includes one L3-only doc and one poisoned doc used to prove the safety rules.</small></div>
+  <div class="box db" style="margin-top:8px"><b>Add at runtime</b><small>paste a document, or import a public Google Doc by link (no key)</small></div></div>
+</div>
+
+<div class="layer" style="margin-top:6px"><div class="t">5 · Optional real systems (dashed): each switches on when its keys are set</div>
+ <div class="row">
+  <div class="box opt"><b>Azure OpenAI</b><small>natural-language answers</small></div><div class="box opt"><b>Azure AI Search</b><small>hybrid search + ACL filter</small></div>
+  <div class="box opt"><b>Prompt Shields</b><small>injection detection</small></div><div class="box opt"><b>ServiceNow</b><small>real INC numbers</small></div>
+  <div class="box opt"><b>Confluence</b><small>crawl → index</small></div><div class="box opt"><b>Entra ID</b><small>sign-in + roles</small></div></div></div>
+
+<div class="layer"><div class="t">6 · Quality and delivery</div>
+ <div class="row">
+  <div class="box"><b>Tests</b><small>pytest (agent, API, DB, Streamlit UI)</small></div><div class="box"><b>Evals gate</b><small>recall · citations · routing · adversarial</small></div>
+  <div class="box"><b>Red team</b><small>PyRIT attacks → 0 tickets written</small></div><div class="box"><b>Mock services</b><small>dummy_run.py: 9 integration checks</small></div>
+  <div class="box"><b>Deploy</b><small>Streamlit Cloud · Dockerfile · Helm · Bicep · GitLab CI</small></div></div></div>
+
+<div class="leg"><span><i class="sw" style="background:#eef2ff;border:1px solid #a5b4fc"></i>front end</span><span><i class="sw" style="background:#f5f3ff;border:1px solid #c4b5fd"></i>agent steps</span>
+ <span><i class="sw" style="background:#fff7ed;border:2px solid #f97316"></i>human approval</span><span><i class="sw" style="background:#ecfdf5;border:1px solid #6ee7b7"></i>data</span><span><i class="sw" style="background:#fffbeb;border:1px dashed #f59e0b"></i>optional (keys)</span></div>
+</div></body></html>
