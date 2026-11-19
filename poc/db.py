@@ -1,7 +1,7 @@
 """SQLite database (stand-in for Azure SQL): schema, seed data and a small thread-safe wrapper.
 File location: POC_DB env var (default l3.db in the working directory; ':memory:' for tests). Delete the file to reset the demo."""
 import os, pathlib, sqlite3, threading, datetime as dt
-SCHEMA_VERSION = 2   # bump when the schema changes: the demo database is dropped and re-seeded (it holds no real data)
+SCHEMA_VERSION = 3   # bump when the schema changes: the demo database is dropped and re-seeded (it holds no real data)
 from data import RULES, LOGS, KB, SEED_TICKETS, URGENCY
 
 def _loadenv():   # tiny .env loader (no dependency); real environment variables win
@@ -61,10 +61,10 @@ def seed():
                        [(d["id"], d["source"], d["app"], d["title"], d["url"], ",".join(d["acl"]), d["text"]) for d in KB])
     if not DB.execute("select 1 from tickets"):
         grp = {a: l2 for a, _, l2, _ in RULES}; now = dt.datetime.now(dt.timezone.utc)
-        for n, app, state, imp, hours, short, body, res, who in SEED_TICKETS:
+        for n, app, state, imp, hours, short, body, res, who, src in SEED_TICKETS:
             ts = (now - dt.timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
             DB.execute("insert into tickets(number,type,idem,app,grp,short,body,state,source,impact,urgency,requester,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                       (n, "UR" if n.startswith("UR") else "INC", n, app, grp[app], short, body, state, "seed", imp, URGENCY[imp], who, ts, ts))
+                       (n, "UR" if n.startswith("UR") else "INC", n, app, grp[app], short, body, state, src, imp, URGENCY[imp], who, ts, ts))
             DB.execute("insert into ticket_comments(number,author,text,kind,ts) values(?,?,?,?,?)", (n, "System", f"Ticket created by {who}", "event", ts))
             if res: DB.execute("insert into ticket_comments(number,author,text,ts) values(?,?,?,?)", (n, "L2 engineer", "Resolution: " + res, ts))
     DB.commit()

@@ -2,7 +2,7 @@
 id: kb6
 source: onenote
 app: branchdesk
-acl: staff
+acl: everyone
 url: https://onenote.demo/branchdesk/receipt-printer
 title: BranchDesk receipt printer offline
 ---

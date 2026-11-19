@@ -112,6 +112,42 @@ def promote_to_kb(number, by="demo.user"):
     id_ = add_doc({"id": f"kb-{number}", "source": "manual", "app": t["app"], "title": f"Fix: {t['short']}", "url": f"ticket://{number}", "text": text})
     add_event(number, f"Fix published as knowledge article {id_} by {by}", by); DB.commit(); return id_
 
+# ---- readiness and business statistics ------------------------------------------
+SYMPTOM = re.compile(r"\b[45]\d\d\b|error|exception|time(?:d)? ?out|fail|blank|stuck|loop|mismatch|differ|crash|reject|pending|does not|doesn't|can't|cannot|unable|not start|wrong|incorrect", re.I)
+CODE = re.compile(r"\b[45]\d\d\b")
+
+def readiness(t, n_attachments=0):
+    """Does an incident arrive with the basics an L2/L3 engineer needs? Four checks: application, environment, a specific symptom or error, and evidence or steps already tried.
+    (AI-assisted tickets get these from follow-up questions, log lookup and checked documents; hand-written ones depend on the person.)"""
+    body = t["body"] or ""
+    problem = re.sub(r"^Problem:\s*", "", body.split("\n")[0]).strip()
+    def field(name):
+        m = re.search(rf"^{name}:\s*(.+)$", body, re.M | re.I); return m.group(1).strip().lower() if m else ""
+    checks = {"Application": t["app"] in APPS,
+              "Environment": bool(re.search(r"^Environment:\s*(prod|uat|dev)\b", body, re.I | re.M)),
+              "Specific symptom or error": len(problem) >= 15 and bool(SYMPTOM.search(problem)),
+              "Evidence or steps already tried": bool(n_attachments or field("Log errors") not in ("", "none found", "none") or field("Docs already checked") not in ("", "none")
+                                                   or field("Already tried") or CODE.search(body))}
+    return {"checks": checks, "ready": all(checks.values()), "missing": [k for k, v in checks.items() if not v]}
+
+def business_stats():
+    """Per-application ticket counts raised with the AI assistant vs without AI, and how many incidents arrive ready for L2/L3."""
+    att = {r["number"]: r["n"] for r in DB.rows("select number, count(*) as n from attachments group by number")}
+    per = {a: {"app": a, "total": 0, "ai": 0, "manual": 0, "open": 0, "breached": 0, "incidents": 0, "ready": 0} for a in APPS}
+    ready_by = {"ai": [0, 0], "manual": [0, 0]}; missing = {"ai": {}, "manual": {}}
+    for t in DB.rows("select number,type,app,body,state,source,urgency,created_at from tickets"):
+        src = "ai" if t["source"] == "ai" else "manual"
+        row = per.setdefault(t["app"], {"app": t["app"], "total": 0, "ai": 0, "manual": 0, "open": 0, "breached": 0, "incidents": 0, "ready": 0})
+        row["total"] += 1; row[src] += 1
+        if t["state"] != "resolved":
+            row["open"] += 1; row["breached"] += sla(t)["state"] == "breached"
+        if t["type"] == "INC":                                   # user requests (access, changes) need no diagnostics
+            r = readiness(t, att.get(t["number"], 0)); row["incidents"] += 1; ready_by[src][1] += 1
+            if r["ready"]: row["ready"] += 1; ready_by[src][0] += 1
+            for m in r["missing"]: missing[src][m] = missing[src].get(m, 0) + 1
+    rows = list(per.values()); n = lambda k: sum(r[k] for r in rows)
+    return {"apps": rows, "total": n("total"), "ai": n("ai"), "manual": n("manual"), "ready_by": ready_by, "missing": missing}
+
 # ---- attachments ------------------------------------------------------------------
 def validate_upload(filename, size):
     ext = os.path.splitext(filename)[1].lower()
@@ -151,7 +187,7 @@ def gdoc_export_url(url):
     if not m: raise ValueError("Only Google Docs links (https://docs.google.com/document/d/...) are supported")
     return f"https://docs.google.com/document/d/{m.group(1)}/export?format=txt"
 
-def import_gdoc(url, app="all", fetch=None):
+def import_gdoc(url, app="all", fetch=None, acl=None):
     """Import a Google Doc shared as 'anyone with the link'. No API key needed; private docs are refused. The text is stored as untrusted content."""
     import httpx
     r = (fetch or (lambda u: httpx.get(u, follow_redirects=True, timeout=15)))(gdoc_export_url(url))
@@ -161,4 +197,4 @@ def import_gdoc(url, app="all", fetch=None):
     text = text.strip()[:50000]
     if not text: raise ValueError("The document is empty")
     title = text.splitlines()[0].strip()[:80]
-    return add_doc({"source": "google-docs", "app": app, "title": title, "url": url, "text": text})
+    return add_doc({"source": "google-docs", "app": app, "title": title, "url": url, "text": text, "acl": acl or ["staff"]})

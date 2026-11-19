@@ -2,7 +2,7 @@
 id: kb2
 source: sharepoint
 app: wealthplan
-acl: staff
+acl: everyone
 url: https://sharepoint.demo/wealthplan/sso-login-loop
 title: WealthPlan login loop after SSO
 ---

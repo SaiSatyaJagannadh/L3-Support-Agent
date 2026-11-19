@@ -2,7 +2,7 @@
 id: kb7
 source: gitlab
 app: wealthplan
-acl: staff
+acl: everyone
 url: https://gitlab.demo/wealthplan/-/issues/42
 title: WealthPlan portfolio chart blank on Safari
 ---

@@ -4,7 +4,7 @@ from fastapi import Header, HTTPException
 
 AUTH = os.getenv('AAD_AUTHORITY', 'https://login.microsoftonline.com')   # override only for the dummy run
 _jwks = None
-def user(authorization: str = Header(""), x_user_groups: str = Header("staff"), x_user_roles: str = Header("")):
+def user(authorization: str = Header(""), x_user_groups: str = Header("everyone,staff"), x_user_roles: str = Header("")):
     global _jwks
     tenant = os.getenv("AAD_TENANT_ID")
     if not tenant: return {"groups": x_user_groups.split(","), "roles": x_user_roles.split(",")}

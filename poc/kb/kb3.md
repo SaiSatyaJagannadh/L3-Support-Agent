@@ -2,7 +2,7 @@
 id: kb3
 source: confluence
 app: branchdesk
-acl: staff
+acl: everyone
 url: https://wiki.demo/branchdesk/upload-413
 title: BranchDesk attachment upload fails with 413
 ---
