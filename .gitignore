@@ -429,3 +429,8 @@ FodyWeavers.xsd
 
 # POC build output
 apps/web/dist/
+
+# demo database
+l3.db
+*.db
+.streamlit/secrets.toml
