@@ -18,11 +18,11 @@ h1{margin:0;font-size:30px;letter-spacing:-.02em} .sub{color:#6b7280;margin:4px 
 <div class="sub">Answers from documents with citations, asks follow-up questions, checks logs and similar tickets, and creates a ticket only after the user approves. Runs with no keys; real systems plug in through secrets.</div>
 
 <div class="layer"><div class="t">1 · Users and front end</div>
- <div class="row"><div class="box ui"><b>Users</b><small>Support analysts · L3 engineers · each signed-in user profile decides which documents they may see</small></div><div class="arrow">→</div>
+ <div class="row"><div class="box ui"><b>Users</b><small>General user (default) · L1 agent · L2 analyst · L3 engineer. The role decides pages, ticket actions and which documents they are entitled to</small></div><div class="arrow">→</div>
  <div class="box ui" style="flex:4"><b>Streamlit app (streamlit_app.py): deployable on Streamlit Cloud</b>
   <span class="pill">💬 Assist: chat, attach logs, follow-up chips, citations, "How I got this answer", 👍/👎, draft ticket</span>
-  <span class="pill">📊 Dashboard: open, P1, SLA at risk / breached, watchlist</span><span class="pill">🎫 Tickets: filters, SLA, activity, attachments, escalate to L3, resolve, publish fix</span><span class="pill">➕ New ticket: separate page, INC / UR, attachments</span>
-  <span class="pill">📚 Knowledge: browse, add document, import Google Doc by link</span><span class="pill">🟢 System status: what each part runs on</span></div>
+  <span class="pill">📊 Business dashboard: tickets per app with AI vs without AI, "complete on arrival" for L2/L3, SLA</span><span class="pill">🎫 Tickets / My tickets: SLA, activity, attachments; L1 escalates · L2 resolves · publish fix</span><span class="pill">➕ New ticket: separate page, INC / UR, attachments</span>
+  <span class="pill">📚 Knowledge: entitled users per document, add, import Google Doc</span><span class="pill">🟢 System status: what each part runs on</span></div>
  <div class="box ui" style="flex:1.2"><b>REST API (optional)</b><small>FastAPI + SSE streaming + Entra token check, same agent and store</small></div></div></div>
 <div class="down">▼</div>
 
@@ -45,10 +45,10 @@ h1{margin:0;font-size:30px;letter-spacing:-.02em} .sub{color:#6b7280;margin:4px 
 <div class="grid2">
  <div class="layer col"><div class="t">3 · Data (SQLite file l3.db → Azure SQL later)</div>
   <div class="box db"><b>Tables</b>
-   <span class="pill">tickets (INC / UR, 10-char number, source: ai · manual · seed)</span><span class="pill">ticket_comments (+ activity events)</span><span class="pill">attachments</span><span class="pill">kb_docs</span><span class="pill">conversations</span><span class="pill">messages</span><span class="pill">rules (routing)</span><span class="pill">logs</span><span class="pill">feedback</span><span class="pill">unanswered (KB gaps)</span><span class="pill">audit</span>
-   <small style="margin-top:6px">AI and manual tickets share one table, so manual tickets also feed similar-ticket search. SLA targets: P1 4h · P2 8h · P3 24h. Resolved fixes can be published as knowledge articles. Delete l3.db to reset.</small></div></div>
+   <span class="pill">tickets (INC / UR, 10-char number, raised with AI · without AI)</span><span class="pill">ticket_comments (+ activity events)</span><span class="pill">attachments</span><span class="pill">kb_docs</span><span class="pill">conversations</span><span class="pill">messages</span><span class="pill">rules (routing)</span><span class="pill">logs</span><span class="pill">feedback</span><span class="pill">unanswered (KB gaps)</span><span class="pill">audit</span>
+   <small style="margin-top:6px">Tickets raised with the AI and without it share one table, so both feed similar-ticket search and the business dashboard. SLA targets: P1 4h · P2 8h · P3 24h. Resolved fixes can be published as knowledge articles. Delete l3.db to reset.</small></div></div>
  <div class="layer col"><div class="t">4 · Knowledge sources</div>
-  <div class="box db"><b>kb/*.md sample runbooks (15)</b><small>tagged Confluence · SharePoint · OneNote · GitLab · Google Docs, with app and access group. Includes one L3-only doc and one poisoned doc used to prove the safety rules.</small></div>
+  <div class="box db"><b>kb/*.md sample runbooks (15) with entitled users</b><small>tagged Confluence · SharePoint · OneNote · GitLab · Google Docs. Entitled users: All users (self-service) · Support team L1–L3 (internal runbooks) · L3 only. One document is a deliberate prompt-injection test.</small></div>
   <div class="box db" style="margin-top:8px"><b>Add at runtime</b><small>paste a document, or import a public Google Doc by link (no key)</small></div></div>
 </div>
 

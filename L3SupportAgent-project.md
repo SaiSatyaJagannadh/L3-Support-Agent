@@ -343,11 +343,11 @@ A working proof of concept of this design is in the repo, runs with no keys, and
 **Product: Support Assist (Streamlit, no admin screen)**
 
 - **Assist**: chat with follow-up chips, streamed answers with citation chips, "How I got this answer" on every message, 👍/👎, attachments in the chat box, and a draft-ticket card (type, attachments, similar tickets and their fixes, Submit / Cancel / "Same issue"). When the documents hold nothing relevant it offers two options: attach a log or screenshot so it can search again, or create a ticket from the conversation.
-- **Dashboard**: open tickets, P1 open, SLA at risk / breached, chats answered without a ticket, charts, an SLA watchlist, and "reported by me".
-- **Tickets**: filters (type, state, origin, "reported by me"), a detail view with activity timeline, attachments (download and add), related knowledge and similar tickets; status changes, **resolve with a fix note**, **escalate to L3** with a hand-off note, and **publish the fix to the knowledge base** (knowledge-centred service).
+- **Dashboard** (L1/L2/L3 only; a business view): tickets raised per application **with AI vs without AI**; how many incidents **arrive complete for L2/L3** (application, environment, specific symptom, evidence or steps tried) with a breakdown of what is missing, for AI vs hand-written tickets; chats answered without a ticket; open tickets, SLA at risk / breached and a watchlist.
+- **Tickets / My tickets**: general users see only their own tickets; agents get filters (type, state, origin with/without AI, "reported by me"), a detail view with activity timeline, attachments (download and add), related knowledge and similar tickets; status changes, **resolve with a fix note**, **escalate to L3** with a hand-off note (L1, L2), resolve (L2, L3), and **publish the fix to the knowledge base** (L2, L3; knowledge-centred service).
 - **New ticket**: a separate page to create a ticket without AI: type Incident (`INC`) or User request (`UR`), application, environment, description, impact and attachments.
-- **Knowledge**: browse what the current profile may see, paste a document, or import a public Google Doc by link.
-- **Identity and status**: demo user profiles (L2 analyst, L3 engineer) decide document access; a System status panel shows what each component runs on and offers a live AI connection test.
+- **Knowledge**: browse the documents the user is **entitled** to (All users / Support team L1–L3 / L3 only); agents can paste a document or import a public Google Doc and choose who is entitled.
+- **Identity and status**: four demo users (General user as the default, L1 agent, L2 analyst, L3 engineer) decide pages, ticket actions and entitled documents; a System status panel shows what each component runs on and offers a live AI connection test.
 
 **How the AI flow works**
 
@@ -359,7 +359,7 @@ A working proof of concept of this design is in the repo, runs with no keys, and
 
 **Ticketing rules**: numbers are always 10 characters (`INC` + 7 digits, `UR` + 8 digits); SLA targets are P1 4 h, P2 8 h, P3 24 h with "at risk" at 75% of the target and "breached" after it; attachments are limited to 5 files of 5 MB each by type and size, and a rejected file creates no ticket; escalation moves the ticket to the application's L3 group and requires a hand-off note; resolving requires a fix note.
 
-**Database (SQLite file `l3.db`, stand-in for Azure SQL)**: `conversations`, `messages`, `kb_docs`, `tickets`, `ticket_comments`, `attachments`, `rules`, `logs`, `feedback`, `unanswered`, `audit`.
+**Database (SQLite file `l3.db`, stand-in for Azure SQL)**: `conversations`, `messages`, `kb_docs`, `tickets` (source `ai` / `manual`), `ticket_comments`, `attachments`, `rules`, `logs`, `feedback`, `unanswered`, `audit`.
 
 | Spec area | What exists | Where |
 | --- | --- | --- |
@@ -369,10 +369,10 @@ A working proof of concept of this design is in the repo, runs with no keys, and
 | Knowledge | 15 sample runbooks tagged Confluence / SharePoint / OneNote / GitLab / Google Docs, including an L3-only doc and a deliberately poisoned doc | `poc/kb/*.md` |
 | REST API (optional) | `/chat`, `/chat/stream` (SSE), `/confirm`, `/tickets`, `/kb`, `/feedback`, `/admin/summary`; Entra token check when configured | `poc/main.py`, `poc/auth.py` |
 | Ingestion | Heading chunker and Confluence crawler (env-gated) | `poc/ingestion.py` |
-| Quality | 27 tests (agent, API, DB, SLA, attachments, UI), eval gate, PyRIT red team (12 attacks, 0 failures), load test, mock-service integration run (9/9) | `poc/test_*.py`, `evals.py`, `redteam.py`, `pyrit_attack.py`, `loadtest.py`, `dummy_run.py` |
+| Quality | 31 tests (agent, API, DB, SLA, attachments, UI), eval gate, PyRIT red team (12 attacks, 0 failures), load test, mock-service integration run (9/9) | `poc/test_*.py`, `evals.py`, `redteam.py`, `pyrit_attack.py`, `loadtest.py`, `dummy_run.py` |
 | Infra / CI | Dockerfile, Helm chart, Bicep skeleton, GitLab CI, `run_poc.sh` | repo root, `infra/` |
 
-**Stand-ins used instead of the real thing**: SQLite for Azure SQL; keyword search for Azure AI Search; quoted document text (or an OpenAI model when a key is set) for answers; demo user profiles for Entra sign-in; mock services for Azure, ServiceNow, Confluence and Entra (code is wired and switches on with keys, but was never run against the real services); manifests that render and compile but were never deployed to a cluster; the GitLab pipeline never ran on GitLab.
+**Stand-ins used instead of the real thing**: SQLite for Azure SQL; keyword search for Azure AI Search; quoted document text (or an OpenAI model when a key is set) for answers; four demo users for Entra sign-in (roles are enforced in the UI only); mock services for Azure, ServiceNow, Confluence and Entra (code is wired and switches on with keys, but was never run against the real services); manifests that render and compile but were never deployed to a cluster; the GitLab pipeline never ran on GitLab.
 
 **Not built**: APIM and MCP servers, VNet / private endpoints / WAF in Bicep, OneNote and GitLab crawlers, SharePoint ACL mapping, SQL Server checkpointer, ServiceNow ticket-status sync, notifications and email intake, reading text from images or PDFs, an admin dashboard in the UI (a `/admin/summary` API remains), and accessibility testing.
 
