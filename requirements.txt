@@ -1,5 +1,5 @@
 # Runtime deps for the Streamlit app (this is the file Streamlit Community Cloud installs)
-streamlit>=1.40
+streamlit>=1.45
 langgraph>=1.0
 httpx
 openai
