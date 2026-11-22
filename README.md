@@ -23,6 +23,7 @@ An AI-assisted support desk for L1 / L2 / L3 teams. Business users describe a pr
 9. [Security and safety](#security-and-safety)
 10. [Project layout](#project-layout)
 11. [What is real and what is a stand-in](#what-is-real-and-what-is-a-stand-in)
+12. [Future enhancements](#future-enhancements)
 
 ---
 
@@ -248,6 +249,7 @@ A 6-minute demo:
 | `poc/ingestion.py` | Confluence crawler and chunker |
 | `poc/test_*.py`, `evals.py`, `redteam.py`, `pyrit_attack.py`, `loadtest.py`, `dummy_run.py` | Tests, quality gate, red team, load test, mock integrations |
 | `Dockerfile`, `infra/`, `.gitlab-ci.yml`, `run_poc.sh` | Container, Helm chart, Bicep skeleton, CI, one-command check |
+| `FUTURE-ENHANCEMENTS.md` | Backlog of what is not built yet |
 | `docs/architecture.html`, `docs/architecture.png` | The architecture diagram (source and image) |
 
 ## What is real and what is a stand-in
@@ -264,3 +266,7 @@ A 6-minute demo:
 | Deployment | Streamlit Cloud is live. Helm, Bicep and GitLab CI are written and validated locally; no cluster deploy and the pipeline never ran on GitLab |
 
 Not built: APIM / MCP servers, VNet and private-endpoint networking, ServiceNow status sync, email intake and notifications, reading text from images and PDFs, server-side role enforcement, accessibility testing.
+
+## Future enhancements
+
+The backlog of what is not built yet (server-side role enforcement, real Entra sign-in, live integrations, ServiceNow sync, OCR, email intake, an admin screen and more) is in [FUTURE-ENHANCEMENTS.md](FUTURE-ENHANCEMENTS.md).
